@@ -1,13 +1,13 @@
 import './style.css';
 import { CHAPTERS, MISSIONS, OBJECTS, OBJECT_BY_ID, SPECIES, STAGE_TITLE } from './content/data';
-import { addHabitat, addPhoto, advanceChapter, buildStandard, canStartMission, chapterReady, clone, completeStage, eraseAt, home, moveObject, placeEdge, placeObject, placePath, placementProblem, stageId, startMission, syncAnimalHomes } from './core/game';
+import { addHabitat, addPhoto, advanceChapter, buildStandard, canStartMission, chapterReady, clone, completeStage, edgeKey, eraseAt, footprint, home, moveObject, placeEdge, placeObject, placePath, stageId, startMission, syncAnimalHomes } from './core/game';
 import { actMini, cargoMetrics, miniState, PIPE_PIECES } from './core/minigames';
 import type { GameState, Point, Species, Tool } from './core/types';
 import { ParkScene } from './render/park';
 import { exportGame, loadGame, readImport, restoreBackup, saveGame } from './save/store';
 
 type Tab = 'park' | 'build' | 'animals' | 'missions' | 'album' | 'settings';
-type Preview = { at: Point; side: number; valid: boolean; definitionId: string | null; rotation: 0 | 1 } | null;
+type Preview = { at: Point; side: number; valid: boolean; problem: string | null; definitionId: string | null; rotation: 0 | 1 } | null;
 
 const loaded = loadGame();
 let game: GameState = loaded.state;
@@ -23,6 +23,7 @@ let serviceVisible = false;
 let pendingImport: GameState | null = null;
 let notice = loaded.warning ?? '';
 let toastTimer: number | undefined;
+let renderedTab: Tab | null = null;
 const history: GameState[] = [];
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -37,6 +38,7 @@ app.innerHTML = `<div class="app-shell">
       <div class="world-shade"></div>
       <div id="celebration" class="celebration" aria-hidden="true"></div>
       <div class="world-top"><span class="island-label"><span class="island-dot"></span> <span id="park-name-label"></span></span><span class="chapter-label" id="chapter-label"></span></div>
+      <div id="build-hint" class="build-hint" role="status" aria-live="polite"></div>
       <div class="world-bottom"><div class="focus-buttons"><button data-action="focus" data-value="dock">Kaj</button><button data-action="focus" data-value="capybara">Flod</button><button data-action="focus" data-value="tiger">Skov</button><button data-action="focus" data-value="penguin">Kyst</button></div><div class="zoom-buttons"><button data-action="zoom-out" aria-label="Zoom ud">−</button><button data-action="zoom-in" aria-label="Zoom ind">+</button></div></div>
       <div id="preview-bar" class="preview-bar"></div>
     </section>
@@ -54,24 +56,81 @@ app.innerHTML = `<div class="app-shell">
 </div>`;
 
 const scene = new ParkScene(document.querySelector<HTMLElement>('#park-canvas')!);
+function objectAt(at: Point) {
+  return game.placedObjects.find(object => footprint(object).some(cell => cell.x === at.x && cell.y === at.y));
+}
+
+function previewProblem(at: Point, side: number): string | null {
+  if (tool === 'path' && game.paths.includes(`${at.x},${at.y}`)) return 'Her ligger allerede en sti.';
+  if (tool === 'move' && !movingId) return 'Vælg først et objekt, du vil flytte.';
+  const draft = clone(game);
+  if (movingId) return moveObject(draft, movingId, at, rotation);
+  if (tool === 'path') return placePath(draft, at);
+  if (tool === 'fence' || tool === 'gate') return placeEdge(draft, at, side, tool);
+  if (tool === 'erase') return eraseAt(draft, at, side);
+  if (tool === 'habitat') return addHabitat(draft, selectedSpecies, at);
+  return placeObject(draft, tool, at, rotation);
+}
+
+function makePreview(at: Point, side: number): Preview {
+  const definitionId = movingId ? game.placedObjects.find(o => o.id === movingId)?.definitionId ?? null : OBJECT_BY_ID[tool] ? tool : null;
+  const problem = previewProblem(at, side);
+  return { at, side, valid: !problem, problem, definitionId, rotation };
+}
+
 scene.onCell = (at, side) => {
-  if (tool === 'none' && !movingId) {
-    const object = game.placedObjects.find(o => {
-      const def = OBJECT_BY_ID[o.definitionId], w = o.rotation ? def.height : def.width, h = o.rotation ? def.width : def.height;
-      return at.x >= o.gridPosition.x && at.x < o.gridPosition.x + w && at.y >= o.gridPosition.y && at.y < o.gridPosition.y + h;
-    });
-    if (object) { tab = 'build'; movingId = object.id; tool = 'move'; say(`Flyt ${OBJECT_BY_ID[object.definitionId].name} gratis ved at trykke på et nyt felt.`); render(); }
+  if ((tab !== 'build' || tool === 'none') && !movingId) {
+    const object = objectAt(at);
+    if (object) { tab = 'build'; movingId = object.id; tool = 'move'; rotation = object.rotation; preview = null; say(`Flyt ${OBJECT_BY_ID[object.definitionId].name} gratis ved at trykke på et nyt felt.`); render(); }
     else say(`Felt ${at.x + 1}, ${at.y + 1}. Vælg Byg for at placere noget her.`);
     return;
   }
-  const definitionId = movingId ? game.placedObjects.find(o => o.id === movingId)?.definitionId ?? null : OBJECT_BY_ID[tool] ? tool : null;
-  preview = { at, side, valid: definitionId ? !placementProblem(game, definitionId, at, rotation, movingId ?? undefined) : true, definitionId, rotation };
+  if (tool === 'move' && !movingId) {
+    const object = objectAt(at);
+    if (!object) { say('Tryk først på det objekt, du vil flytte.'); return; }
+    movingId = object.id;
+    rotation = object.rotation;
+    say(`${OBJECT_BY_ID[object.definitionId].name} valgt. Tryk på det nye sted.`);
+    render();
+    return;
+  }
+  preview = makePreview(at, side);
   render();
+};
+scene.onMiss = () => {
+  if (tab === 'build') say('Tryk på land inde på øen. Brug − for at zoome ud, eller vælg Kaj, Flod, Skov eller Kyst.');
 };
 
 const esc = (value: unknown) => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const button = (action: string, value: string, text: string, cls = '') => `<button class="${cls}" data-action="${action}" data-value="${esc(value)}">${text}</button>`;
 const speciesList: Species[] = ['capybara', 'tiger', 'penguin'];
+
+function toolName(): string {
+  if (movingId) return `Flyt ${OBJECT_BY_ID[game.placedObjects.find(o => o.id === movingId)?.definitionId ?? '']?.name ?? 'objekt'}`;
+  if (OBJECT_BY_ID[tool]) return OBJECT_BY_ID[tool].name;
+  return ({ path: 'Sti', fence: 'Hegn', gate: 'Port', habitat: 'Markér hjem', move: 'Flyt objekt', erase: 'Fjern' } as Record<string, string>)[tool] ?? 'Vælg værktøj';
+}
+
+function eraseLabel(at: Point, side: number): string {
+  const edge = edgeKey(at.x, at.y, side);
+  if (game.fences.includes(edge)) return 'Fjern hegn';
+  if (game.gates.includes(edge)) return 'Fjern port';
+  const object = objectAt(at);
+  if (object) return `Fjern ${OBJECT_BY_ID[object.definitionId].name}`;
+  if (game.paths.includes(`${at.x},${at.y}`)) return 'Fjern sti';
+  return 'Fjern';
+}
+
+function previewCost(): string {
+  if (movingId) return 'Gratis flytning';
+  if (tool === 'erase') return 'Købspris tilbage ved salg';
+  if (tool === 'fence') return '5 ◈';
+  if (tool === 'gate') return '20 ◈';
+  if (tool === 'path' || tool === 'habitat') return 'Gratis';
+  const object = OBJECT_BY_ID[tool];
+  if (!object) return 'Gratis';
+  return object.id === 'portal' && game.chapterId >= 9 && !game.claimedRewardIds.includes('free-portal') ? 'Første er gratis' : `${object.price} ◈`;
+}
 
 function speak(text: string): void {
   if (!game.settings.voice || !('speechSynthesis' in window)) return;
@@ -145,21 +204,24 @@ function renderPark(): string {
 }
 
 function renderBuild(): string {
-  const options = speciesList.map(s => {
+  const nextHome = speciesList.find(s => game.chapterId >= (s === 'capybara' ? 1 : s === 'tiger' ? 3 : 5) && !home(game, s).habitat) ?? selectedSpecies;
+  const option = (s: Species) => {
     const info = SPECIES[s], { check, habitat } = home(game, s);
     const unlock = s === 'capybara' ? 1 : s === 'tiger' ? 3 : 5;
-    return `<article class="blueprint ${selectedSpecies === s ? 'selected' : ''}"><div class="blueprint-top"><span class="blueprint-icon" style="--animal-color:${info.color}">${info.icon}</span><div><strong>${info.plural}</strong><small>${habitat ? check?.valid ? 'Gyldigt hjem' : 'Under opbygning' : `Åbnes i kapitel ${unlock}`}</small></div></div><div class="blueprint-actions">${button('select-species', s, 'Vælg', 'ghost compact')}${!habitat && game.chapterId >= unlock ? button('standard', s, `Byg forslag · ${s === 'capybara' ? 270 : s === 'tiger' ? 290 : 305} ◈`, 'secondary compact') : ''}</div>${selectedSpecies === s && check && !check.valid ? `<p class="missing">${check.missing.map(esc).join(' · ')}</p>` : ''}</article>`;
-  }).join('');
+    return `<article class="blueprint ${nextHome === s ? 'recommended' : ''} ${selectedSpecies === s ? 'selected' : ''}"><div class="blueprint-top"><span class="blueprint-icon" style="--animal-color:${info.color}">${info.icon}</span><div><strong>${info.plural}</strong><small>${habitat ? check?.valid ? 'Gyldigt hjem · klar til dyr' : 'Under opbygning' : `Åbnes i kapitel ${unlock}`}</small></div></div><div class="blueprint-actions">${button('select-species', s, 'Se område', 'ghost compact')}${!habitat && game.chapterId >= unlock ? button('standard', s, `Byg færdigt hjem · ${s === 'capybara' ? 270 : s === 'tiger' ? 290 : 305} ◈`, 'secondary compact') : ''}</div>${selectedSpecies === s && check && !check.valid ? `<p class="missing">${check.missing.map(esc).join(' · ')}</p>` : ''}</article>`;
+  };
   const tools = [
-    ['path', '⌁', 'Sti', '0'], ['fence', '▤', 'Hegn', '5'], ['gate', '⚐', 'Port', '20'], ['habitat', '◇', 'Habitat', '0'],
+    ['path', '⌁', 'Sti', '0'], ['fence', '▤', 'Hegn', '5'], ['gate', '⚐', 'Port', '20'], ['habitat', '◇', 'Markér hjem', '0'],
     ['move', '✥', 'Flyt', '0'], ['erase', '⌫', 'Fjern', 'retur'],
   ].map(([id, icon, name, price]) => button('tool', id, `<span class="tool-icon">${icon}</span><span>${name}</span><small>${price}</small>`, `tool-button ${tool === id ? 'selected' : ''}`)).join('');
   const catalog = OBJECTS.filter(o => o.unlock <= game.chapterId).map(o => button('tool', o.id, `<span class="tool-icon">${o.icon}</span><span>${o.name}</span><small>${o.price} ◈</small>`, `tool-button ${tool === o.id ? 'selected' : ''}`)).join('');
-  return `<div class="panel-head"><div class="eyebrow">DIT BYGGEBORD</div><h1>Byg en levende park.</h1><p>Vælg et værktøj, tryk på øen, og bekræft placeringen. Træk kortet for at se mere.</p></div>
-    <div class="section-row"><h3>Hurtig start</h3><span class="subtle">Kan bygges om senere</span></div><div class="blueprint-list">${options}</div>
+  return `<div class="panel-head build-head"><div class="eyebrow">DIT BYGGEBORD</div><h1>Byg en levende park.</h1><p>Start med et færdigt hjem, eller vælg et værktøj og tryk på øen. Træk på øen for at flytte kameraet.</p></div>
+    <div class="build-status"><div><strong>${esc(toolName())}</strong><small>${tool === 'none' ? 'Vælg et værktøj nedenfor' : movingId ? 'Tryk på objektets nye sted på øen' : tool === 'move' ? 'Tryk først på et objekt på øen' : 'Tryk på et felt på øen, og bekræft'}</small></div>${tool !== 'none' ? button('cancel-tool', '', 'Afslut', 'ghost compact') : ''}<button class="ghost compact build-undo" data-action="undo" aria-label="Fortryd sidste handling">↶</button></div>
+    <div class="section-row"><h3>Hurtigt hjem</h3><span class="subtle">Et tryk · kan bygges om</span></div><div class="blueprint-list">${option(nextHome)}</div>
     <div class="section-row"><h3>Byg selv</h3>${button('undo', '', '↶ Fortryd', 'small-link')}</div><div class="tool-grid">${tools}</div>
     <div class="section-row"><h3>Objekter</h3><span class="subtle">Pris pr. placering</span></div><div class="tool-grid">${catalog}</div>
-    <p class="microcopy">Hegn ligger langs feltkanter. Vend objekter med Drej. Flytning er gratis; salg giver hele købsprisen tilbage.</p>`;
+    <div class="section-row"><h3>Andre levesteder</h3></div><div class="blueprint-list">${speciesList.filter(s => s !== nextHome).map(option).join('')}</div>
+    <p class="microcopy">Markér hjem vælger kun området; knappen »Byg færdigt hjem« bygger også sti, hegn, port og inventar. Hegn og porte ligger på feltkanter. Flytning er gratis; fjernelse giver købsprisen tilbage.</p>`;
 }
 
 function renderAnimals(): string {
@@ -273,15 +335,28 @@ function renderOverlay(): string {
 }
 
 function render(): void {
+  document.querySelector<HTMLElement>('.app-shell')!.classList.toggle('is-building', tab === 'build');
   document.querySelector<HTMLElement>('#budget')!.textContent = `${game.budget.toLocaleString('da-DK')} Budget`;
   document.querySelector<HTMLElement>('#animal-count')!.textContent = `${game.animals.length}/6 dyr`;
   document.querySelector<HTMLElement>('#park-name-label')!.textContent = game.parkName;
   document.querySelector<HTMLElement>('#chapter-label')!.textContent = game.partyOpen ? 'Parken er åben' : `Kapitel ${game.chapterId}`;
-  document.querySelector<HTMLElement>('#side-panel')!.innerHTML = tab === 'park' ? renderPark() : tab === 'build' ? renderBuild() : tab === 'animals' ? renderAnimals() : tab === 'missions' ? renderMissions() : tab === 'album' ? renderAlbum() : renderSettings();
+  const panel = document.querySelector<HTMLElement>('#side-panel')!;
+  const previousScroll = renderedTab === tab ? panel.scrollTop : 0;
+  panel.innerHTML = tab === 'park' ? renderPark() : tab === 'build' ? renderBuild() : tab === 'animals' ? renderAnimals() : tab === 'missions' ? renderMissions() : tab === 'album' ? renderAlbum() : renderSettings();
+  panel.scrollTop = previousScroll;
+  renderedTab = tab;
   document.querySelectorAll<HTMLButtonElement>('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.value === tab));
   const previewBar = document.querySelector<HTMLElement>('#preview-bar')!;
-  previewBar.innerHTML = preview ? `<div><strong>${preview.definitionId ? OBJECT_BY_ID[preview.definitionId]?.name ?? 'Objekt' : tool === 'habitat' ? `${SPECIES[selectedSpecies].name} hjem` : tool === 'path' ? 'Stisegment' : tool === 'fence' ? 'Hegnssegment' : tool === 'gate' ? 'Port' : 'Fjern'}</strong><small>Felt ${preview.at.x + 1}, ${preview.at.y + 1}${preview.definitionId ? ` · ${OBJECT_BY_ID[preview.definitionId]?.price ?? 0} ◈` : ''}</small></div><div class="preview-actions">${preview.definitionId ? button('rotate', '', 'Drej', 'ghost compact') : ''}${button('cancel-preview', '', 'Annuller', 'ghost compact')}${button('confirm-preview', '', 'Placér ✓', 'primary compact')}</div>` : '';
+  const previewTitle = preview && (movingId ? toolName() : tool === 'erase' ? eraseLabel(preview.at, preview.side) : tool === 'habitat' ? `Markér ${SPECIES[selectedSpecies].name.toLowerCase()}hjem` : toolName());
+  const confirmTitle = tool === 'erase' ? 'Fjern ✓' : movingId ? 'Flyt ✓' : tool === 'habitat' ? 'Markér ✓' : 'Placér ✓';
+  const canRotatePreview = !!preview?.definitionId && OBJECT_BY_ID[preview.definitionId]?.width !== OBJECT_BY_ID[preview.definitionId]?.height;
+  previewBar.innerHTML = preview ? `<div class="preview-copy"><strong>${esc(previewTitle)}</strong><small>Felt ${preview.at.x + 1}, ${preview.at.y + 1} · ${previewCost()}</small>${preview.problem ? `<small class="preview-error">${esc(preview.problem)}</small>` : ''}</div><div class="preview-actions">${canRotatePreview ? button('rotate', '', 'Drej', 'ghost compact') : ''}${button('cancel-preview', '', 'Luk', 'ghost compact')}<button class="primary compact" data-action="confirm-preview" ${preview.valid ? '' : 'disabled'}>${confirmTitle}</button></div>` : '';
   previewBar.classList.toggle('visible', !!preview);
+  previewBar.classList.toggle('invalid', !!preview?.problem);
+  const buildHint = document.querySelector<HTMLElement>('#build-hint')!;
+  buildHint.textContent = tab === 'build' ? preview?.problem ?? (tool === 'none' ? 'Vælg et værktøj nedenfor, eller byg et færdigt hjem.' : preview ? `${toolName()} er klar · bekræft nedenfor` : movingId ? `${toolName()} · tryk på et nyt sted` : tool === 'move' ? 'Flyt · tryk først på et objekt' : `${toolName()} valgt · tryk på øen`) : '';
+  buildHint.classList.toggle('visible', tab === 'build');
+  buildHint.classList.toggle('invalid', !!preview?.problem);
   document.querySelector<HTMLElement>('#overlay-root')!.innerHTML = renderOverlay();
   scene.setBuildMode(tab === 'build');
   scene.draw(game, preview);
@@ -289,6 +364,7 @@ function render(): void {
 
 function confirmPreview(): void {
   if (!preview) return;
+  if (preview.problem) { say(preview.problem); return; }
   const p = preview;
   const success = tool === 'habitat' ? `${SPECIES[selectedSpecies].name} hjem er markeret.` : tool === 'erase' ? 'Ombygningen er gemt.' : 'Placeret og gemt.';
   const okay = commit(draft => {
@@ -299,7 +375,7 @@ function confirmPreview(): void {
     if (tool === 'habitat') return addHabitat(draft, selectedSpecies, p.at);
     return placeObject(draft, tool, p.at, rotation);
   }, success);
-  if (okay) { preview = null; movingId = null; render(); }
+  if (okay) { preview = null; movingId = null; if (tool === 'move') tool = 'none'; render(); }
 }
 
 app.addEventListener('click', event => {
@@ -309,6 +385,7 @@ app.addEventListener('click', event => {
   if (miniAction) {
     const service = serviceVisible, stage = service ? 'pump' : stageId(game);
     if (!stage) return;
+    const rescuedSpecies = service ? null : game.mission?.missionId ?? null;
     commit(draft => {
       const outcome = actMini(draft, stage, miniAction, target.dataset.value ?? '', service);
       if (outcome.completed && !service) completeStage(draft);
@@ -318,28 +395,36 @@ app.addEventListener('click', event => {
     });
     say(notice);
     if (service && game.servicePumpDone) { serviceVisible = false; render(); }
-    if (!game.mission) { missionVisible = false; tab = 'park'; render(); }
+    if (!game.mission) {
+      missionVisible = false;
+      tab = 'park';
+      if (rescuedSpecies) scene.focus(rescuedSpecies, true);
+      render();
+      if (rescuedSpecies) say(`${SPECIES[rescuedSpecies].plural} er hjemme. Se dem gå rundt i deres nye hjem!`);
+    }
     return;
   }
   const action = target.dataset.action, value = target.dataset.value ?? '';
-  if (action === 'tab') { tab = value as Tab; if (tab === 'build') scene.focus(selectedSpecies); render(); }
+  if (action === 'tab') { tab = value as Tab; if (tab === 'build') scene.focus(selectedSpecies); else { tool = 'none'; preview = null; movingId = null; } render(); }
   else if (action === 'focus') {
-    scene.focus(value as Species | 'all' | 'dock');
+    scene.focus(value as Species | 'all' | 'dock', speciesList.includes(value as Species));
     if (game.chapterId === 10 && speciesList.includes(value as Species) && !game.visitedHabitats.includes(value as Species))
       commit(draft => { draft.visitedHabitats.push(value as Species); return null; }, `${SPECIES[value as Species].plural} er besøgt.`);
   }
   else if (action === 'zoom-in') scene.changeZoom(0.5);
   else if (action === 'zoom-out') scene.changeZoom(-0.5);
-  else if (action === 'tool') { tool = value; movingId = null; preview = null; tab = 'build'; render(); say(tool === 'fence' || tool === 'gate' ? 'Tryk nær en feltkant på øen.' : 'Tryk på et felt på øen for at se placeringen.'); }
+  else if (action === 'tool') { tool = value; movingId = null; preview = null; rotation = 0; tab = 'build'; render(); speak(tool === 'fence' || tool === 'gate' ? 'Tryk nær en feltkant på øen.' : tool === 'move' ? 'Tryk først på det objekt, du vil flytte.' : tool === 'habitat' ? 'Dette markerer kun et område. Brug Byg færdigt hjem for sti, hegn, port og inventar.' : 'Tryk på et felt på øen, og bekræft placeringen.'); }
+  else if (action === 'cancel-tool') { tool = 'none'; movingId = null; preview = null; render(); }
   else if (action === 'select-species') { selectedSpecies = value as Species; scene.focus(selectedSpecies); render(); }
   else if (action === 'standard') {
     const s = value as Species;
-    if (commit(draft => buildStandard(draft, s), `${SPECIES[s].plural} har et bygget hjem. Du kan ændre det frit.`)) { selectedSpecies = s; scene.focus(s); tab = 'build'; render(); }
+    if (commit(draft => buildStandard(draft, s), `${SPECIES[s].plural} har et bygget hjem. Du kan ændre det frit.`)) { selectedSpecies = s; tool = 'none'; movingId = null; preview = null; scene.focus(s); tab = 'build'; render(); }
   }
   else if (action === 'suggest-sign' || action === 'suggest-portal') {
     const portal = action === 'suggest-portal';
     tool = portal ? 'portal' : 'sign'; tab = 'build'; movingId = null;
-    preview = { at: portal ? { x: 7, y: 18 } : { x: 8, y: 16 }, side: 0, valid: true, definitionId: tool, rotation: 0 };
+    rotation = 0;
+    preview = makePreview(portal ? { x: 7, y: 18 } : { x: 8, y: 16 }, 0);
     scene.focus('dock'); render(); say('Her er et forslag. Tryk Placér, eller tryk et andet felt på øen.');
   }
   else if (action === 'suggest-remodel') {
@@ -347,7 +432,7 @@ app.addEventListener('click', event => {
     if (!object) { say('Byg først et objekt, du kan flytte.'); return; }
     movingId = object.id; tool = 'move'; tab = 'build'; rotation = object.rotation;
     const at = object.definitionId === 'sign' ? { x: 9, y: 16 } : { x: object.gridPosition.x + 1, y: object.gridPosition.y };
-    preview = { at, side: 0, valid: !placementProblem(game, object.definitionId, at, rotation, movingId), definitionId: object.definitionId, rotation };
+    preview = makePreview(at, 0);
     scene.focus('dock'); render(); say('Her er et nyt sted. Tryk Placér eller vælg et andet felt. Flytning er gratis.');
   }
   else if (action === 'undo') {
@@ -355,7 +440,7 @@ app.addEventListener('click', event => {
     if (!previous) say('Der er ikke mere at fortryde.');
     else { game = previous; saveGame(game); preview = null; movingId = null; render(); say('Sidste ændring er fortrudt.'); }
   }
-  else if (action === 'rotate') { rotation = rotation ? 0 : 1; if (preview) { preview.rotation = rotation; preview.valid = preview.definitionId ? !placementProblem(game, preview.definitionId, preview.at, rotation, movingId ?? undefined) : true; } render(); }
+  else if (action === 'rotate') { rotation = rotation ? 0 : 1; if (preview) preview = makePreview(preview.at, preview.side); render(); }
   else if (action === 'cancel-preview') { preview = null; render(); }
   else if (action === 'confirm-preview') confirmPreview();
   else if (action === 'start-mission') {

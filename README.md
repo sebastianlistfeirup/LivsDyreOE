@@ -2,20 +2,23 @@
 
 Et dansksproget, mobilvenligt park- og redningsspil. Byg tre trygge levesteder, red seks dyr gennem minispil, og åbn din egen dyreø gennem ti kapitler.
 
-Når GitHub Pages er aktiveret, kan spillet åbnes på telefonen her: **https://sebastianlistfeirup.github.io/LivsDyreOE/**. Der kræves ingen installation eller konto. Drej telefonen, hvis du foretrækker mere plads til byggekortet.
+Spillet kan åbnes på telefonen her: **https://sebastianlistfeirup.github.io/LivsDyreOE/**. En kort [kapivar-animationstest](https://sebastianlistfeirup.github.io/LivsDyreOE/previews/capy-animation.html) viser gangen uden at gennemføre redningsmissionen først. Der kræves ingen installation eller konto. Drej telefonen, hvis du foretrækker mere plads til byggekortet.
 På iPhone kan siden føjes til hjemmeskærmen via Safaris delingsmenu; på Android bruges browserens **Føj til startskærm**. Internet er stadig nødvendigt for at hente spillet.
 
-Første udgivelse kræver én handling fra repository-ejeren: Log ind på GitHub, åbn [Settings → Pages](https://github.com/sebastianlistfeirup/LivsDyreOE/settings/pages), og vælg **GitHub Actions** under **Build and deployment → Source**. GitHub viser 404 for indstillingssiden, hvis du ikke er logget ind som ejer. Derefter kan den seneste kørsel genstartes under **Actions**, eller en ny ændring til `main` udløser automatisk en udgivelse.
+GitHub Pages er sat til **GitHub Actions**. Nye ændringer til `main` udgiver automatisk en opdateret version.
 
 ## Spil på telefon
 
-- Tryk **Byg → Byg forslag** for at starte med kapivarernes hjem. Forslaget kan senere flyttes eller bygges om.
+- Tryk **Byg → Byg færdigt hjem** for at starte med kapivarernes hjem. Det bygger sti, hegn, port og det nødvendige inventar i ét trin; du kan ændre det senere.
 - Tryk **Park → Fortsæt historien** og derefter **Missioner** for at begynde den første redning.
 - I minispillene kan du altid bruge **Hjælp til ét trin** eller **Løs med hjælp**. Der er ingen tidsgrænse.
-- Tryk på kortet for at placere stier, hegn og objekter. Træk kortet for at panorere; brug `+` og `−` til at zoome.
+- Vil du bygge selv, så vælg et værktøj under **Byg**, tryk på øen, læs forhåndsvisningen, og tryk **Placér**. Ugyldige placeringer forklares, før du betaler.
+- Vælg **Flyt**, tryk på en bygget ting og derefter på dens nye sted. **Fortryd** ruller den seneste ændring tilbage. Du kan også trykke direkte på en bygget ting for at flytte den.
+- Træk på øen for at panorere; knib med to fingre eller brug `+` og `−` for at zoome.
+- Sommerfugle og natur bevæger sig fra starten. Dyrene kommer først til øen, når de er reddet. Kapivarernes gang bruger en billedsekvens fra videoreferencen; deres animation kan ses tydeligere med **Flod** og zoomknapperne.
 - Spillet gemmer automatisk på den aktuelle enhed. Under **Indstillinger** kan du eksportere et gemt spil til en fil og importere det på en anden telefon.
 
-Spillets regler, økonomi, missioner, kapitler og navn er baseret på den vedlagte *LIVS_DYREOE_BIBEL_v1_2*. Illustrationerne i denne prototype er originale, spiltilpassede billeder. Referencebillederne er stilretning, ikke skærmbilleder af den aktuelle implementering.
+Spillets regler, økonomi, missioner, kapitler og navn er baseret på den vedlagte *LIVS_DYREOE_BIBEL_v1_2*. Øens illustrationer er spiltilpassede billeder; kapivarens gangbilleder er udklip fra en videoreference stillet til rådighed af brugeren. Referencebillederne er stilretning, ikke skærmbilleder af den aktuelle implementering.
 
 ## Udvikling
 

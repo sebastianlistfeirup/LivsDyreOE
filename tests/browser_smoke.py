@@ -1,9 +1,9 @@
 """Run against a local Vite server: python tests/browser_smoke.py."""
 
-from pathlib import Path
+import os
 from playwright.sync_api import sync_playwright
 
-URL = "http://127.0.0.1:4173/LivsDyreOE/"
+URL = os.environ.get("LIVS_TEST_URL", "http://127.0.0.1:4173/LivsDyreOE/")
 
 
 def check_layout(browser, width, height):

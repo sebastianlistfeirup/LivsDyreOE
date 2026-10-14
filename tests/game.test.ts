@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStandard, canStartMission, completeStage, createGame, eraseAt, home, placeEdge, startMission, advanceChapter, stageId } from '../src/core/game';
+import { addHabitat, buildStandard, canStartMission, completeStage, createGame, eraseAt, home, moveObject, placeEdge, placeObject, placePath, startMission, advanceChapter, stageId } from '../src/core/game';
 import { actMini, cargoMetrics } from '../src/core/minigames';
 import { MISSIONS } from '../src/content/data';
 import type { Species } from '../src/core/types';
@@ -29,6 +29,27 @@ describe('park, economy, and access', () => {
     expect(canStartMission(state, 'capybara')).toMatch(/gyldigt hjem/);
   });
 
+  it('treats a fence crossing a path as a real barrier to the gate', () => {
+    const state = createGame();
+    expect(buildStandard(state, 'capybara')).toBeNull();
+    expect(home(state, 'capybara').check?.access).toBe(true);
+    expect(placeEdge(state, { x: 2, y: 17 }, 1, 'fence')).toBeNull();
+    expect(home(state, 'capybara').check?.access).toBe(false);
+    expect(home(state, 'capybara').check?.missing).toContain('Porten skal nås via sti fra kajen.');
+    expect(placeEdge(state, { x: 2, y: 17 }, 1, 'gate')).toBeNull();
+    expect(home(state, 'capybara').check?.access).toBe(true);
+  });
+
+  it('does not charge or claim a standard home if a previous fence blocks its access path', () => {
+    const state = createGame();
+    expect(placeEdge(state, { x: 2, y: 17 }, 1, 'fence')).toBeNull();
+    const before = structuredClone(state);
+    expect(buildStandard(state, 'capybara')).toMatch(/Porten skal nås via sti/);
+    expect(state).toEqual(before);
+    expect(eraseAt(state, { x: 2, y: 17 }, 1)).toBeNull();
+    expect(buildStandard(state, 'capybara')).toBeNull();
+  });
+
   it('refunds an edge replacement without creating money', () => {
     const state = createGame();
     const start = state.budget;
@@ -37,6 +58,46 @@ describe('park, economy, and access', () => {
     expect(state.budget).toBe(start - 20);
     expect(eraseAt(state, { x: 4, y: 4 }, 1)).toBeNull();
     expect(state.budget).toBe(start);
+  });
+
+  it('keeps service buildings clear while preserving the dock path', () => {
+    const state = createGame();
+    expect(placePath(state, { x: 12, y: 16 })).toMatch(/servicebygning/);
+    expect(placePath(state, { x: 1, y: 16 })).toMatch(/servicebygning/);
+    expect(placePath(state, { x: 1, y: 17 })).toMatch(/allerede en sti/);
+    expect(state.paths).toEqual(['1,17']);
+    expect(placeEdge(state, { x: 4, y: 4 }, 9, 'fence')).toMatch(/feltkant/);
+    expect(state.fences).toHaveLength(0);
+  });
+
+  it('rejects a standard-home path conflict without changing the park, then permits a free move', () => {
+    const state = createGame();
+    expect(placeObject(state, 'shrub', { x: 7, y: 17 })).toBeNull();
+    const before = structuredClone(state);
+    expect(buildStandard(state, 'capybara')).toMatch(/Flyt Buskbed/);
+    expect(state).toEqual(before);
+    expect(moveObject(state, state.placedObjects[0].id, { x: 7, y: 18 }, 0)).toBeNull();
+    expect(state.budget).toBe(before.budget);
+    expect(moveObject(state, state.placedObjects[0].id, { x: 7, y: 18 }, 0)).toMatch(/nyt felt/);
+    expect(state.remodelCount).toBe(1);
+    expect(buildStandard(state, 'capybara')).toBeNull();
+    expect(home(state, 'capybara').check?.valid).toBe(true);
+  });
+
+  it('counts a newly extended free path as a remodel, but not a repeated tap', () => {
+    const state = createGame();
+    expect(placePath(state, { x: 2, y: 17 })).toBeNull();
+    expect(state.remodelCount).toBe(1);
+    expect(placePath(state, { x: 2, y: 17 })).toMatch(/allerede en sti/);
+    expect(state.remodelCount).toBe(1);
+  });
+
+  it('does not count the same fenced area as two species homes', () => {
+    const state = createGame();
+    expect(buildStandard(state, 'capybara')).toBeNull();
+    expect(addHabitat(state, 'tiger', { x: 3, y: 11 })).toBeNull();
+    expect(home(state, 'capybara').check?.missing).toContain('Dette område er allerede markeret til en anden dyreart.');
+    expect(home(state, 'tiger').check?.valid).toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { DOCK, HEIGHT, OBJECT_BY_ID, WIDTH } from '../content/data';
-import { cellKey, footprint, home } from '../core/game';
+import { cellKey, edgeKey, footprint, home } from '../core/game';
 import type { GameState, Point, Species } from '../core/types';
 
 type Preview = { at: Point; side: number; valid: boolean; definitionId: string | null; rotation: 0 | 1 } | null;
@@ -11,8 +11,10 @@ const wood = mat('#805b40'), paleWood = mat('#bd8c60'), darkWood = mat('#4d5148'
 const leaf = mat('#437953'), leafLight = mat('#629464'), stone = mat('#82948b'), frost = mat('#b8dfe1');
 const cream = mat('#f4e9cf'), orange = mat('#df8842'), charcoal = mat('#273b48'), flower = mat('#e8a6a0');
 const box = new THREE.BoxGeometry(1, 1, 1), ball = new THREE.SphereGeometry(1, 8, 6), cone = new THREE.ConeGeometry(1, 1, 7);
+const pathTile = new THREE.BoxGeometry(0.83, 0.035, 0.83);
 const shadowDisk = new THREE.CircleGeometry(1, 16);
 const shadowInk = new THREE.MeshBasicMaterial({ color: '#28442c', transparent: true, opacity: 0.17, depthWrite: false });
+const MAX_ZOOM = 8;
 
 function mesh(geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1): THREE.Mesh {
   const m = new THREE.Mesh(geometry, material);
@@ -40,6 +42,7 @@ function edgeMesh(key: string, material: THREE.Material): THREE.Group {
   return g;
 }
 
+
 function addObject(group: THREE.Group, object: GameState['placedObjects'][number], art: Record<string, THREE.SpriteMaterial>): void {
   const def = OBJECT_BY_ID[object.definitionId];
   const [x, z] = coord(object.gridPosition.x, object.gridPosition.y);
@@ -50,12 +53,13 @@ function addObject(group: THREE.Group, object: GameState['placedObjects'][number
   if (art[id]) {
     const sprite = new THREE.Sprite(art[id]);
     const sizes: Record<string, [number, number]> = {
-      pond: [2.65, 1.74], shelter: [2.32, 1.84], cave: [2.62, 1.76],
-      swim: [2.55, 1.72], log: [2.44, 1.62], portal: [2.45, 2.25], shade: [2.3, 2.25],
+      pond: [2.1, 1.4], shelter: [2.85, 2.06], cave: [3.12, 2.08],
+      swim: [2.55, 1.72], log: [2.44, 1.62], portal: [2.45, 2.25], shade: [2.05, 1.98],
     };
     const [width, height] = sizes[id];
     sprite.scale.set(width, height, 1);
     sprite.position.y = height * 0.48;
+    if (id === 'pond') sprite.position.x += 0.3;
     g.add(sprite);
   } else if (id === 'shrub') {
     g.add(mesh(ball, leaf, -0.19, 0.28, 0, 0.3, 0.26, 0.4));
@@ -90,26 +94,38 @@ export class ParkScene {
   private camera = new THREE.OrthographicCamera(-15, 15, 15, -15, 0.1, 200);
   private staticGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
-  private animated: { object: THREE.Object3D; origin: THREE.Vector3; kind: 'animal' | 'visitor' | 'tree' }[] = [];
+  private dynamicMaterials: THREE.Material[] = [];
+  private animated: { object: THREE.Object3D; origin: THREE.Vector3; kind: 'animal' | 'visitor' | 'tree' | 'butterfly'; route?: THREE.Vector3[]; delay?: number; wings?: THREE.Object3D[]; sprite?: THREE.Sprite; baseY?: number; capyWalk?: boolean }[] = [];
   private terrainGrid: THREE.LineSegments | null = null;
   private animalMaterials: Record<Species, THREE.SpriteMaterial>;
+  private capyFrames: THREE.Texture[];
+  private capyFramesLoaded = new Set<number>();
   private propMaterials: Record<string, THREE.SpriteMaterial>;
   private treeMaterial: THREE.SpriteMaterial;
   private seaTexture: THREE.Texture | null = null;
   private ray = new THREE.Raycaster();
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private target = new THREE.Vector3(-5, 0, 4);
-  private zoom = 2.2;
+  private target = new THREE.Vector3(-5.5, 0, 6);
+  private zoom = 1.9;
   private motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   private pointerStart: { x: number; y: number } | null = null;
+  private pointers = new Map<number, { x: number; y: number }>();
+  private pinchDistance = 0;
+  private pinchZoomStart = 1;
   private moved = false;
   onCell: (at: Point, side: number) => void = () => {};
+  onMiss: () => void = () => {};
 
   constructor(private host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     const loader = new THREE.TextureLoader();
+    this.capyFrames = Array.from({ length: 15 }, (_, index) => {
+      const texture = loader.load(`${import.meta.env.BASE_URL}art/capy-walk-${index + 1}.webp`, () => this.capyFramesLoaded.add(index));
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    });
     this.animalMaterials = Object.fromEntries((['capybara', 'tiger', 'penguin'] as Species[]).map(species => {
       const texture = loader.load(`${import.meta.env.BASE_URL}art/${species}.webp`);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -133,11 +149,37 @@ export class ParkScene {
     this.resize();
     new ResizeObserver(() => this.resize()).observe(host);
     const canvas = this.renderer.domElement;
-    canvas.addEventListener('pointerdown', e => { this.pointerStart = { x: e.clientX, y: e.clientY }; this.moved = false; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointerdown', e => {
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      canvas.setPointerCapture(e.pointerId);
+      if (this.pointers.size === 1) {
+        this.pointerStart = { x: e.clientX, y: e.clientY };
+        this.moved = false;
+      } else if (this.pointers.size === 2) {
+        const [first, second] = [...this.pointers.values()];
+        this.pinchDistance = Math.hypot(first.x - second.x, first.y - second.y);
+        this.pinchZoomStart = this.zoom;
+        this.pointerStart = null;
+        this.moved = true;
+      }
+    });
     canvas.addEventListener('pointermove', e => {
+      if (!this.pointers.has(e.pointerId)) return;
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pointers.size >= 2) {
+        const [first, second] = [...this.pointers.values()];
+        const distance = Math.hypot(first.x - second.x, first.y - second.y);
+        if (this.pinchDistance > 1) {
+          this.zoom = THREE.MathUtils.clamp(this.pinchZoomStart * distance / this.pinchDistance, 0.9, MAX_ZOOM);
+          this.resize();
+        }
+        return;
+      }
       if (!this.pointerStart) return;
       const dx = e.clientX - this.pointerStart.x, dy = e.clientY - this.pointerStart.y;
-      if (Math.hypot(dx, dy) > 7) this.moved = true;
+      // A thumb jitters more than a mouse. Do not turn an intentional tap into
+      // a camera pan merely because the finger shifted a few screen pixels.
+      if (Math.hypot(dx, dy) > (e.pointerType === 'touch' ? 13 : 6)) this.moved = true;
       if (this.moved) {
         const factor = 23 / (this.host.clientWidth * this.zoom);
         this.target.x -= dx * factor * 0.8; this.target.z -= dy * factor * 1.1;
@@ -146,8 +188,20 @@ export class ParkScene {
         this.updateCamera(); this.pointerStart = { x: e.clientX, y: e.clientY };
       }
     });
-    canvas.addEventListener('pointerup', e => { if (!this.moved) this.pick(e); this.pointerStart = null; });
-    canvas.addEventListener('pointercancel', () => { this.pointerStart = null; });
+    canvas.addEventListener('pointerup', e => {
+      const shouldPick = this.pointers.size === 1 && !this.moved;
+      this.pointers.delete(e.pointerId);
+      if (shouldPick) this.pick(e);
+      this.pointerStart = null;
+      this.pinchDistance = 0;
+      if (this.pointers.size) this.moved = true;
+    });
+    canvas.addEventListener('pointercancel', e => {
+      this.pointers.delete(e.pointerId);
+      this.pointerStart = null;
+      this.pinchDistance = 0;
+      this.moved = true;
+    });
     canvas.style.touchAction = 'none';
     this.animate();
   }
@@ -207,13 +261,15 @@ export class ParkScene {
     this.camera.zoom = this.zoom; this.camera.updateProjectionMatrix();
   }
 
-  focus(species: Species | 'all' | 'dock'): void {
+  focus(species: Species | 'all' | 'dock', closeUp = false): void {
     const p = species === 'all' ? { x: 12, y: 10 } : species === 'dock' ? DOCK :
-      species === 'capybara' ? { x: 5, y: 12 } : species === 'tiger' ? { x: 12, y: 5 } : { x: 19, y: 11 };
-    const [x, z] = coord(p.x, p.y); this.target.set(x, 0, z); this.zoom = species === 'all' ? 1.15 : 2.9; this.updateCamera(); this.resize();
+      species === 'capybara' ? { x: 3.5, y: 11.5 } : species === 'tiger' ? { x: 12, y: 5 } : { x: 19, y: 11 };
+    const [x, z] = coord(p.x, p.y); this.target.set(x, 0, z);
+    this.zoom = species === 'all' ? 1.15 : closeUp && species !== 'dock' ? 3.9 : 2.9;
+    this.updateCamera(); this.resize();
   }
 
-  changeZoom(delta: number): void { this.zoom = THREE.MathUtils.clamp(this.zoom + delta, 0.9, 4.5); this.resize(); }
+  changeZoom(delta: number): void { this.zoom = THREE.MathUtils.clamp(this.zoom + delta, 0.9, MAX_ZOOM); this.resize(); }
 
   setBuildMode(enabled: boolean): void { if (this.terrainGrid) this.terrainGrid.visible = enabled; }
 
@@ -239,10 +295,10 @@ export class ParkScene {
     const ndc = new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -((event.clientY - rect.top) / rect.height * 2 - 1));
     this.ray.setFromCamera(ndc, this.camera);
     const point = new THREE.Vector3();
-    if (!this.ray.ray.intersectPlane(this.plane, point)) return;
+    if (!this.ray.ray.intersectPlane(this.plane, point)) { this.onMiss(); return; }
     const fx = point.x + WIDTH / 2, fy = point.z + HEIGHT / 2;
     const x = Math.floor(fx), y = Math.floor(fy);
-    if (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) return;
+    if (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) { this.onMiss(); return; }
     const localX = fx - x, localY = fy - y;
     const values = [localY, 1 - localX, 1 - localY, localX];
     const side = values.indexOf(Math.min(...values));
@@ -250,6 +306,9 @@ export class ParkScene {
   }
 
   draw(state: GameState, preview: Preview): void {
+    this.dynamicGroup.traverse(node => { if (node instanceof THREE.InstancedMesh) node.dispose(); });
+    for (const material of this.dynamicMaterials) material.dispose();
+    this.dynamicMaterials = [];
     this.dynamicGroup.clear(); this.animated = [];
     const group = this.dynamicGroup;
     const occupied = new Set(state.paths);
@@ -274,9 +333,19 @@ export class ParkScene {
       { x: 1, y: 13 }, { x: 9, y: 12 }, { x: 12, y: 11 }, { x: 16, y: 15 }, { x: 15, y: 16 }, { x: 22, y: 17 },
       { x: 2, y: 18 }, { x: 7, y: 18 }, { x: 12, y: 18 }, { x: 19, y: 18 },
     ];
+    const habitatClearance = new Set<string>();
+    for (const species of ['capybara', 'tiger', 'penguin'] as Species[]) {
+      const check = home(state, species).check;
+      if (!check?.valid) continue;
+      for (const cell of check.cells) {
+        const [hx, hy] = cell.split(',').map(Number);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+          habitatClearance.add(cellKey(hx + dx, hy + dy));
+      }
+    }
     trees.forEach((p, i) => {
       if (occupied.has(cellKey(p.x, p.y))) return;
-      if (state.habitats.some(h => home(state, h.speciesId).check?.valid && home(state, h.speciesId).check?.cells.includes(cellKey(p.x, p.y)))) return;
+      if (habitatClearance.has(cellKey(p.x, p.y))) return;
       const [x, z] = coord(p.x, p.y);
       const tree = new THREE.Sprite(this.treeMaterial);
       const scale = 3.45 + i % 3 * 0.43;
@@ -284,8 +353,20 @@ export class ParkScene {
       group.add(groundShadow(x, z, scale * 0.32, scale * 0.19), tree);
       this.animated.push({ object: tree, origin: tree.position.clone(), kind: 'tree' });
     });
-    const pathGeometry = new THREE.BoxGeometry(0.83, 0.035, 0.83);
-    const pathInstances = new THREE.InstancedMesh(pathGeometry, pathMat, Math.max(1, state.paths.length));
+    // Native butterflies make the island feel inhabited before the rescue
+    // missions, without showing any of the three species prematurely.
+    const butterflies: Point[] = [{ x: 4, y: 9 }, { x: 7, y: 16 }, { x: 11, y: 9 }, { x: 16, y: 6 }, { x: 21, y: 15 }];
+    butterflies.forEach((p, i) => {
+      const [x, z] = coord(p.x, p.y);
+      const insect = new THREE.Group(); insect.position.set(x, 0.52 + i % 2 * 0.12, z);
+      const wingMat = i % 2 ? flower : orange;
+      const left = mesh(ball, wingMat, -0.11, 0.015, 0, 0.12, 0.085, 0.035);
+      const right = mesh(ball, wingMat, 0.11, 0.015, 0, 0.12, 0.085, 0.035);
+      insect.add(left, right, mesh(ball, charcoal, 0, 0, 0, 0.037, 0.075, 0.036));
+      group.add(insect);
+      this.animated.push({ object: insect, origin: insect.position.clone(), kind: 'butterfly', wings: [left, right] });
+    });
+    const pathInstances = new THREE.InstancedMesh(pathTile, pathMat, Math.max(1, state.paths.length));
     const dummy = new THREE.Object3D();
     for (let i = 0; i < state.paths.length; i++) {
       const [x, y] = state.paths[i].split(',').map(Number), [wx, wz] = coord(x, y);
@@ -303,28 +384,98 @@ export class ParkScene {
         const [x, y] = k.split(',').map(Number);
         return !state.placedObjects.some(o => footprint(o).some(p => p.x === x && p.y === y));
       });
-      const displayCells: Record<Species, string[]> = { capybara: ['3,14', '4,13'], tiger: ['10,6', '13,5'], penguin: ['17,13', '20,13'] };
+      const displayCells: Record<Species, string[]> = { capybara: ['2,11', '6,10'], tiger: ['10,6', '13,5'], penguin: ['17,13', '20,13'] };
+      const preferredPatrols: Record<Species, string[][]> = {
+        capybara: [['2,11', '2,12'], ['6,10', '6,11']],
+        tiger: [['10,6', '11,6', '12,6'], ['13,5', '13,6', '13,7']],
+        penguin: [['17,13', '18,13', '18,12'], ['20,13', '21,13', '21,12']],
+      };
+      const free = new Set(cells);
       animals.forEach((_, i) => {
         const preferred = displayCells[species][i];
-        const key = cells.includes(preferred) ? preferred : cells[(i * 5 + Math.floor(cells.length / 3)) % cells.length] ?? cellKey(habitat.seed.x, habitat.seed.y);
+        const designed = preferredPatrols[species][i];
+        const useDesigned = designed && designed.every((cell, index) => {
+          if (!free.has(cell)) return false;
+          if (index === 0) return true;
+          const [ax, ay] = designed[index - 1].split(',').map(Number);
+          const [bx, by] = cell.split(',').map(Number);
+          const side = bx > ax ? 1 : bx < ax ? 3 : by > ay ? 2 : 0;
+          return Math.abs(bx - ax) + Math.abs(by - ay) === 1 &&
+            !state.fences.includes(edgeKey(ax, ay, side)) && !state.gates.includes(edgeKey(ax, ay, side));
+        });
+        const key = useDesigned ? designed[0] : cells.includes(preferred) ? preferred : cells[(i * 5 + Math.floor(cells.length / 3)) % cells.length] ?? cellKey(habitat.seed.x, habitat.seed.y);
         const [cx, cy] = key.split(',').map(Number), [x, z] = coord(cx, cy);
+        const patrol = useDesigned ? [...designed] : [key];
+        for (let step = 0; !useDesigned && step < 3; step++) {
+          const [px, py] = patrol[patrol.length - 1].split(',').map(Number);
+          const options = [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy], side) => {
+            const next = cellKey(px + dx, py + dy);
+            if (!free.has(next) || patrol.includes(next) || state.fences.includes(edgeKey(px, py, side)) || state.gates.includes(edgeKey(px, py, side))) return null;
+            const clearance = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+              .filter(([nx, ny]) => free.has(cellKey(px + dx + nx, py + dy + ny))).length;
+            return { next, score: clearance * 10 + ((side + i * 2 + step) % 4) };
+          }).filter((value): value is { next: string; score: number } => value !== null)
+            .sort((a, b) => b.score - a.score);
+          if (!options.length) break;
+          patrol.push(options[0].next);
+        }
+        const route = patrol.map(cell => {
+          const [rx, ry] = cell.split(',').map(Number), [wx, wz] = coord(rx, ry);
+          // Keep the walking silhouette inside the standard enclosure rather
+          // than letting its nose cross the edge fence at boundary cell centers.
+          const insetX = species === 'capybara' && useDesigned ? rx === 2 ? 0.24 : rx === 7 ? -0.24 : 0 : 0;
+          const insetZ = species === 'capybara' && useDesigned && ry === 10 ? 0.18 : 0;
+          return new THREE.Vector3(wx + insetX, 0, wz + insetZ);
+        });
+        if (species === 'capybara') {
+          const walker = new THREE.Group();
+          walker.position.copy(route[0] ?? new THREE.Vector3(x, 0, z));
+          walker.add(groundShadow(0, 0, 0.43, 0.22));
+          // The original portrait remains visible while the video-derived walk
+          // textures load; the rejected procedural rig is never displayed.
+          const material = this.animalMaterials.capybara.clone();
+          // Large decorative billboards can otherwise sort in front of an
+          // animal in a neighboring free cell (especially the pond rocks).
+          material.depthTest = false;
+          const figure = new THREE.Sprite(material);
+          figure.renderOrder = 5;
+          figure.scale.set(1.42, 0.89, 1);
+          figure.position.set(0, 0.28, 0);
+          walker.add(figure);
+          this.dynamicMaterials.push(material);
+          group.add(walker);
+          this.animated.push({ object: walker, origin: walker.position.clone(), kind: 'animal', route, delay: i * 2.3, capyWalk: true, sprite: figure, baseY: 0.28 });
+          return;
+        }
         const figure = new THREE.Sprite(this.animalMaterials[species]);
         // Habitat buildings stay substantially larger than each animal. The sprites
         // have transparent padding, so rendered animal bounds are smaller than scale.
-        const width = species === 'tiger' ? 1.78 : species === 'penguin' ? 0.9 : 1.72;
-        const height = species === 'tiger' ? 1.36 : species === 'penguin' ? 1.1 : 1.32;
-        figure.position.set(x, height * 0.43, z);
+        const width = species === 'tiger' ? 2.08 : species === 'penguin' ? 1 : 2.12;
+        const height = species === 'tiger' ? 1.59 : species === 'penguin' ? 1.19 : 1.6;
+        figure.position.set(0, height * 0.43, 0);
         figure.scale.set(width, height, 1);
-        if (i) figure.material = this.animalMaterials[species].clone();
-        group.add(groundShadow(x, z, width * 0.37, width * 0.22), figure);
-        this.animated.push({ object: figure, origin: figure.position.clone(), kind: 'animal' });
+        if (i) { figure.material = this.animalMaterials[species].clone(); this.dynamicMaterials.push(figure.material); }
+        const walker = new THREE.Group(); walker.position.set(x, 0, z);
+        walker.add(groundShadow(0, 0, width * 0.37, width * 0.22), figure);
+        group.add(walker);
+        this.animated.push({ object: walker, origin: walker.position.clone(), kind: 'animal', route, delay: i * 2.3, sprite: figure, baseY: height * 0.43 });
       });
     }
     if (state.animals.length) {
-      const visitorPaths = state.paths.slice(0, Math.min(8, state.paths.length));
-      visitorPaths.forEach((key, i) => {
-        if (i % 2) return;
-        const [cx, cy] = key.split(',').map(Number), [x, z] = coord(cx, cy);
+      const promenade = state.paths
+        .map(key => key.split(',').map(Number))
+        .filter(([x, y]) => y === 17 && x >= DOCK.x)
+        .sort((a, b) => a[0] - b[0]);
+      const route: THREE.Vector3[] = [];
+      for (const [x, y] of promenade) {
+        if (x !== DOCK.x + route.length) break;
+        const [wx, wz] = coord(x, y);
+        route.push(new THREE.Vector3(wx, 0, wz));
+      }
+      const [dockX, dockZ] = coord(DOCK.x, DOCK.y);
+      for (let i = 0; i < Math.min(4, Math.max(1, Math.floor(route.length / 3))); i++) {
+        const start = route[Math.floor(i * route.length / 4)] ?? new THREE.Vector3(dockX, 0, dockZ);
+        const [x, z] = [start.x, start.z];
         const person = new THREE.Group(); person.position.set(x, 0, z); person.scale.setScalar(0.82);
         const shirt = [flower, frost, orange, leaf][i % 4];
         person.add(mesh(box, shirt, 0, 0.62, 0, 0.28, 0.43, 0.2));
@@ -334,32 +485,95 @@ export class ParkScene {
         person.add(mesh(box, cream, 0.19, 0.61, 0, 0.09, 0.35, 0.1));
         person.add(mesh(ball, cream, 0, 0.98, 0, 0.13, 0.14, 0.13));
         person.add(mesh(box, i % 4 === 0 ? darkWood : wood, 0, 1.09, -0.01, 0.25, 0.07, 0.25));
-        group.add(person); this.animated.push({ object: person, origin: person.position.clone(), kind: 'visitor' });
-      });
+        group.add(person); this.animated.push({ object: person, origin: person.position.clone(), kind: 'visitor', route, delay: i * Math.max(2, route.length / 4) });
+      }
     }
     if (preview) {
       const [x, z] = coord(preview.at.x, preview.at.y);
       const indicator = new THREE.MeshBasicMaterial({ color: preview.valid ? '#fff3ad' : '#e78f8f', transparent: true, opacity: 0.63, depthWrite: false });
+      this.dynamicMaterials.push(indicator);
       let w = 1, h = 1;
       if (preview.definitionId && OBJECT_BY_ID[preview.definitionId]) {
         const def = OBJECT_BY_ID[preview.definitionId]; w = preview.rotation ? def.height : def.width; h = preview.rotation ? def.width : def.height;
       }
-      group.add(mesh(box, indicator, x + (w - 1) / 2, 0.14, z + (h - 1) / 2, w * 0.95, 0.08, h * 0.95));
+      const cx = x + (w - 1) / 2, cz = z + (h - 1) / 2;
+      group.add(mesh(box, indicator, cx, 0.14, cz, w * 0.95, 0.08, h * 0.95));
+      const border = new THREE.MeshBasicMaterial({ color: preview.valid ? '#075c57' : '#a92f3d', depthTest: false });
+      this.dynamicMaterials.push(border);
+      const lineWidth = 0.12, halfW = w * 0.49, halfH = h * 0.49;
+      group.add(mesh(box, border, cx, 0.195, cz - halfH, w * 0.98, 0.045, lineWidth));
+      group.add(mesh(box, border, cx, 0.195, cz + halfH, w * 0.98, 0.045, lineWidth));
+      group.add(mesh(box, border, cx - halfW, 0.195, cz, lineWidth, 0.045, h * 0.98));
+      group.add(mesh(box, border, cx + halfW, 0.195, cz, lineWidth, 0.045, h * 0.98));
     }
   }
 
   private animate = (): void => {
     requestAnimationFrame(this.animate);
     const t = performance.now() / 1000;
-    if (this.seaTexture && !this.motionQuery.matches) this.seaTexture.offset.set(t * 0.0016, t * 0.0008);
-    this.animated.forEach(({ object, origin, kind }, i) => {
-      if (this.motionQuery.matches) { object.position.copy(origin); return; }
+    if (this.seaTexture && !this.motionQuery.matches) this.seaTexture.offset.set(t * 0.009, t * 0.0045);
+    this.animated.forEach(({ object, origin, kind, route, delay, wings, sprite, baseY, capyWalk }, i) => {
+      if (this.motionQuery.matches) {
+        object.position.copy(origin);
+        if (sprite) { sprite.position.y = baseY ?? sprite.position.y; sprite.material.rotation = 0; }
+        if (capyWalk && sprite && this.capyFramesLoaded.has(0)) sprite.material.map = this.capyFrames[0];
+        if (wings) for (const wing of wings) wing.rotation.y = 0;
+        return;
+      }
       const phase = t * (kind === 'animal' ? 0.95 : kind === 'visitor' ? 1.7 : 0.58) + i * 1.37;
+      if (kind === 'animal' && route && route.length > 1) {
+        const leg = route.length - 1;
+        const walked = t * 0.36 + (delay ?? 0);
+        const travel = walked % (leg * 2);
+        const distance = travel < leg ? travel : leg * 2 - travel;
+        const segment = Math.min(Math.floor(distance), route.length - 2);
+        object.position.lerpVectors(route[segment], route[segment + 1], distance - segment);
+        if (capyWalk && sprite) {
+          // One source gait spans a visible ~0.36 world-unit stride; advance
+          // it by distance walked, so feet do not cycle rapidly in place.
+          const frame = Math.floor(walked / 0.36 * this.capyFrames.length) % this.capyFrames.length;
+          if (this.capyFramesLoaded.has(frame)) sprite.material.map = this.capyFrames[frame];
+          else if (this.capyFramesLoaded.has(0)) sprite.material.map = this.capyFrames[0];
+          // The source animal faces screen-right. Flip it to follow the
+          // projected direction of each patrol segment, including the return.
+          const screenward = (route[segment + 1].x - route[segment].x) * 0.78 -
+            (route[segment + 1].z - route[segment].z) * 0.63;
+          sprite.scale.x = (screenward * (travel >= leg ? -1 : 1) < 0 ? -1 : 1) * 1.42;
+          sprite.position.y = 0.28;
+        }
+        if (sprite && !capyWalk) {
+          sprite.position.y = (baseY ?? 0) + Math.abs(Math.sin(t * 3.4 + i)) * 0.035;
+          sprite.material.rotation = Math.sin(t * 1.5 + i) * 0.022;
+        }
+        return;
+      }
+      if (kind === 'visitor' && route && route.length > 1) {
+        const leg = route.length - 1;
+        const travel = (t * 0.46 + (delay ?? 0)) % (leg * 2);
+        const distance = travel < leg ? travel : leg * 2 - travel;
+        const segment = Math.min(Math.floor(distance), route.length - 2);
+        const fraction = distance - segment;
+        object.position.lerpVectors(route[segment], route[segment + 1], fraction);
+        object.position.y = Math.abs(Math.sin(t * 5.3 + i)) * 0.026;
+        object.rotation.y = travel < leg ? -0.2 : 0.2;
+        return;
+      }
+      if (kind === 'butterfly') {
+        object.position.set(origin.x + Math.sin(t * 0.75 + i * 2) * 0.46,
+          origin.y + Math.sin(t * 2.3 + i) * 0.13,
+          origin.z + Math.cos(t * 0.53 + i * 3) * 0.28);
+        if (wings) {
+          wings[0].rotation.y = Math.sin(t * 16 + i) * 0.95;
+          wings[1].rotation.y = -Math.sin(t * 16 + i) * 0.95;
+        }
+        return;
+      }
       object.position.set(
-        origin.x + Math.sin(phase) * (kind === 'animal' ? 0.12 : kind === 'visitor' ? 0.18 : 0.015),
-        origin.y + Math.abs(Math.sin(phase * 1.6)) * (kind === 'animal' ? 0.025 : kind === 'visitor' ? 0.045 : 0.008),
-        origin.z + Math.cos(phase * 0.63) * (kind === 'animal' ? 0.06 : kind === 'visitor' ? 0.12 : 0),
+        origin.x + Math.sin(phase) * (kind === 'animal' ? 0.28 : 0.075),
+        origin.y + Math.abs(Math.sin(phase * 1.6)) * (kind === 'animal' ? 0.055 : 0.013),
+        origin.z + Math.cos(phase * 0.63) * (kind === 'animal' ? 0.13 : 0),
       );
+      if (sprite) sprite.material.rotation = Math.sin(phase * 1.4) * 0.021;
     });
     this.renderer.render(this.scene, this.camera);
   };

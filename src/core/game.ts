@@ -2,9 +2,10 @@ import { CHAPTERS, DOCK, HEIGHT, MISSIONS, OBJECT_BY_ID, SPECIES, WIDTH } from '
 import type { GameState, Habitat, HabitatCheck, PlacedObject, Point, Species } from './types';
 
 export const cellKey = (x: number, y: number) => `${x},${y}`;
-export const inBounds = (x: number, y: number) => x >= 0 && y >= 0 && x < WIDTH && y < HEIGHT;
+export const inBounds = (x: number, y: number) => Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0 && x < WIDTH && y < HEIGHT;
 export const edgeKey = (x: number, y: number, side: number) => side === 0 ? `h:${x}:${y}` : side === 1 ? `v:${x + 1}:${y}` : side === 2 ? `h:${x}:${y + 1}` : `v:${x}:${y}`;
 const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
+const isServiceCell = (x: number, y: number) => (x <= 1 && y >= 16 && !(x === DOCK.x && y === DOCK.y)) || (x === 12 && y === 16);
 
 export function createGame(): GameState {
   return {
@@ -64,6 +65,8 @@ export function placeObject(state: GameState, definitionId: string, at: Point, r
 export function moveObject(state: GameState, id: string, at: Point, rotation: 0 | 1): string | null {
   const object = state.placedObjects.find(o => o.id === id);
   if (!object) return 'Objektet findes ikke længere.';
+  if (object.gridPosition.x === at.x && object.gridPosition.y === at.y && object.rotation === rotation)
+    return 'Vælg et nyt felt eller drej objektet.';
   const problem = placementProblem(state, object.definitionId, at, rotation, id);
   if (problem) return problem;
   object.gridPosition = at;
@@ -75,13 +78,16 @@ export function moveObject(state: GameState, id: string, at: Point, rotation: 0 
 export function placePath(state: GameState, at: Point): string | null {
   if (!inBounds(at.x, at.y)) return 'Feltet er uden for øen.';
   const key = cellKey(at.x, at.y);
+  if (state.paths.includes(key)) return 'Der er allerede en sti på dette felt.';
+  if (isServiceCell(at.x, at.y)) return 'Her står en fast servicebygning.';
   if (state.placedObjects.some(o => footprint(o).some(p => p.x === at.x && p.y === at.y))) return 'Et objekt står på feltet.';
-  if (!state.paths.includes(key)) state.paths.push(key);
+  state.paths.push(key);
+  state.remodelCount += 1;
   return null;
 }
 
 export function placeEdge(state: GameState, at: Point, side: number, type: 'fence' | 'gate'): string | null {
-  if (!inBounds(at.x, at.y)) return 'Vælg en feltkant på øen.';
+  if (!inBounds(at.x, at.y) || !Number.isInteger(side) || side < 0 || side > 3) return 'Vælg en feltkant på øen.';
   const key = edgeKey(at.x, at.y, side);
   const own = type === 'fence' ? state.fences : state.gates;
   const other = type === 'fence' ? state.gates : state.fences;
@@ -96,6 +102,7 @@ export function placeEdge(state: GameState, at: Point, side: number, type: 'fenc
 }
 
 export function eraseAt(state: GameState, at: Point, side?: number): string | null {
+  if (!inBounds(at.x, at.y) || (side !== undefined && (!Number.isInteger(side) || side < 0 || side > 3))) return 'Vælg et felt på øen.';
   if (side !== undefined) {
     const key = edgeKey(at.x, at.y, side);
     const fence = state.fences.indexOf(key), gate = state.gates.indexOf(key);
@@ -128,7 +135,9 @@ function reachedPaths(state: GameState): Set<string> {
   reached.add(start);
   while (queue.length) {
     const [x, y] = queue.shift()!.split(',').map(Number);
-    for (const [dx, dy] of directions) {
+    for (let side = 0; side < directions.length; side++) {
+      if (state.fences.includes(edgeKey(x, y, side))) continue;
+      const [dx, dy] = directions[side];
       const key = cellKey(x + dx, y + dy);
       if (paths.has(key) && !reached.has(key)) { reached.add(key); queue.push(key); }
     }
@@ -155,6 +164,8 @@ export function validateHabitat(state: GameState, habitat: Habitat): HabitatChec
     }
   }
   if (leaks) missing.push('Luk hegnet hele vejen rundt.');
+  if (state.habitats.some(h => h.id !== habitat.id && h.speciesId !== habitat.speciesId && seen.has(cellKey(h.seed.x, h.seed.y))))
+    missing.push('Dette område er allerede markeret til en anden dyreart.');
   const spec = SPECIES[habitat.speciesId];
   if (seen.size < spec.minimum) missing.push(`Mindst ${spec.minimum} felter (${seen.size} nu).`);
   const insideObjects = state.placedObjects.filter(o => footprint(o).every(p => seen.has(cellKey(p.x, p.y))));
@@ -185,12 +196,14 @@ export function validateHabitat(state: GameState, habitat: Habitat): HabitatChec
       const point = steps.shift()!, key = cellKey(point.x, point.y);
       if (visited.has(key)) continue;
       visited.add(key);
-      for (const [dx, dy] of directions) {
+      for (let side = 0; side < directions.length; side++) {
+        if (state.fences.includes(edgeKey(point.x, point.y, side))) continue;
+        const [dx, dy] = directions[side];
         const n = cellKey(point.x + dx, point.y + dy);
         if (dry.has(n) && !visited.has(n)) steps.push({ x: point.x + dx, y: point.y + dy });
       }
     }
-    const targets = insideObjects.filter(o => [spec.needs.at(-1), spec.needs.at(-2)].includes(o.definitionId));
+    const targets = insideObjects.filter(o => spec.needs.includes(o.definitionId));
     if (targets.some(o => !footprint(o).some(p => directions.some(([dx, dy]) => visited.has(cellKey(p.x + dx, p.y + dy))))))
       missing.push('Lav en tør rute fra port til foder og aktivitet.');
   }
@@ -227,16 +240,25 @@ export function buildStandard(state: GameState, species: Species): string | null
     const problem = placementProblem(state, id, { x, y });
     if (problem) return `Forslaget kan ikke placeres: ${problem}`;
   }
+  const proposedPaths = new Set<string>();
+  for (let x = 1; x <= 18; x++) proposedPaths.add(cellKey(x, 17));
+  for (let y = site.y + site.h; y <= 17; y++) proposedPaths.add(cellKey(site.gateX, y));
+  const blockingObject = state.placedObjects.find(o => footprint(o).some(p => proposedPaths.has(cellKey(p.x, p.y))));
+  if (blockingObject) return `Flyt ${OBJECT_BY_ID[blockingObject.definitionId].name} fra den foreslåede sti først.`;
   const cost = neededEdges.length * 5 + (state.gates.includes(gate) ? 0 : 20) + site.objects.reduce((sum, [id]) => sum + OBJECT_BY_ID[id].price, 0);
   if (state.budget < cost) return `Forslaget koster ${cost} point; der mangler ${cost - state.budget}.`;
-  state.budget -= cost;
-  state.fences.push(...neededEdges);
-  if (!state.gates.includes(gate)) state.gates.push(gate);
-  for (const [definitionId, x, y] of site.objects) state.placedObjects.push({ id: nextId(state, definitionId), definitionId, gridPosition: { x, y }, rotation: 0, paidPrice: OBJECT_BY_ID[definitionId].price });
-  addHabitat(state, species, { x: site.x, y: site.y });
-  for (let x = 1; x <= 18; x++) if (!state.paths.includes(cellKey(x, 17))) state.paths.push(cellKey(x, 17));
+  const draft = clone(state);
+  draft.budget -= cost;
+  draft.fences.push(...neededEdges);
+  if (!draft.gates.includes(gate)) draft.gates.push(gate);
+  for (const [definitionId, x, y] of site.objects) draft.placedObjects.push({ id: nextId(draft, definitionId), definitionId, gridPosition: { x, y }, rotation: 0, paidPrice: OBJECT_BY_ID[definitionId].price });
+  addHabitat(draft, species, { x: site.x, y: site.y });
+  for (let x = 1; x <= 18; x++) if (!draft.paths.includes(cellKey(x, 17))) draft.paths.push(cellKey(x, 17));
   const yBottom = site.y + site.h;
-  for (let y = yBottom; y <= 17; y++) if (!state.paths.includes(cellKey(site.gateX, y))) state.paths.push(cellKey(site.gateX, y));
+  for (let y = yBottom; y <= 17; y++) if (!draft.paths.includes(cellKey(site.gateX, y))) draft.paths.push(cellKey(site.gateX, y));
+  const check = home(draft, species).check;
+  if (!check?.valid) return `Forslaget kræver en fri adgang og et gyldigt hjem: ${check?.missing.join(' ') ?? 'Kontrollér området.'}`;
+  Object.assign(state, draft);
   return null;
 }
 
