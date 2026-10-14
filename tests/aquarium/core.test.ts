@@ -29,12 +29,21 @@ function fixture(levelId = 1): BoardState {
 }
 
 describe("deterministic match-3 board", () => {
-  it("creates all ten 8×8 levels without matches and with legal opening moves", () => {
+  it("creates all thirty shaped 8×8 levels without matches and with legal opening moves", () => {
+    expect(LEVELS).toHaveLength(30);
+    expect(new Set(LEVELS.map((level) => level.voids.join(","))).size).toBe(30);
     for (const level of LEVELS) {
       const board = createBoard(level.id);
       expect(board.tiles).toHaveLength(64);
       expect(board.blockers.filter(Boolean)).toHaveLength(level.coral.length);
       expect(board.sand.filter(Boolean)).toHaveLength(level.sand.length);
+      expect(board.voids?.filter(Boolean)).toHaveLength(level.voids.length);
+      expect(board.rocks?.filter(Boolean)).toHaveLength(level.rocks.length);
+      expect(board.clams?.filter(Boolean)).toHaveLength(level.clams.length);
+      expect(board.bubbles?.filter(Boolean)).toHaveLength(level.bubbles.length);
+      const terrain = [...level.voids, ...level.rocks, ...level.clams, ...level.coral];
+      expect(new Set(terrain).size, `Overlapping occupied terrain in level ${level.id}`).toBe(terrain.length);
+      for (const cell of [...level.sand, ...level.bubbles]) expect(terrain).not.toContain(cell);
       expect(findMatchGroups(board.tiles)).toHaveLength(0);
       expect(getLegalMoves(board).length).toBeGreaterThan(0);
       expect(board.movesRemaining).toBe(level.moves);

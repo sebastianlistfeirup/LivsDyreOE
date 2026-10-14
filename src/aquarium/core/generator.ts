@@ -80,6 +80,21 @@ export function createBoard(levelId: number, seed?: number): BoardState {
   const sand = Array.from({ length: 64 }, (_, cell) =>
     level.sand.includes(cell),
   );
+  const voids = Array.from({ length: 64 }, (_, cell) =>
+    level.voids.includes(cell),
+  );
+  const rocks = Array.from({ length: 64 }, (_, cell) =>
+    level.rocks.includes(cell),
+  );
+  const clams = Array.from({ length: 64 }, (_, cell) =>
+    level.clams.includes(cell) ? 2 : 0,
+  );
+  const bubbles = Array.from({ length: 64 }, (_, cell) =>
+    level.bubbles.includes(cell),
+  );
+  const occupied = blockers.map(
+    (coral, cell) => coral || voids[cell] || rocks[cell] || clams[cell] > 0,
+  );
   const fixed = new Map<number, TileType>();
   if (level.openingRay) {
     // Swap cells 3 and 11 to make four leaves on the first row.
@@ -99,7 +114,7 @@ export function createBoard(levelId: number, seed?: number): BoardState {
     let failed = false;
     for (const [cell, type] of fixed) tiles[cell] = { id: cell + 1, type };
     for (let cell = 0; cell < 64; cell++) {
-      if (blockers[cell] || fixed.has(cell)) continue;
+      if (occupied[cell] || fixed.has(cell)) continue;
       const [start, next] = randomInt(rngState, 5);
       rngState = next;
       let chosen: TileType | undefined;
@@ -119,7 +134,7 @@ export function createBoard(levelId: number, seed?: number): BoardState {
     if (
       failed ||
       findMatchGroups(tiles).length ||
-      !hasLegalMove(tiles, blockers)
+      !hasLegalMove(tiles, occupied)
     )
       continue;
     let nextId = 1;
@@ -129,6 +144,11 @@ export function createBoard(levelId: number, seed?: number): BoardState {
       tiles,
       blockers,
       sand,
+      voids,
+      rocks,
+      clams,
+      bubbles,
+      gravity: level.gravity ?? "down",
       rngState,
       movesRemaining: level.moves,
       objectives: level.objectives.map((objective) => ({

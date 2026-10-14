@@ -1,10 +1,21 @@
 import "./aquarium.css";
+import { renderPostcard, type PostcardSprite } from "./postcard";
 
 export type AquariumMode = "backdrop" | "decorate";
-export type AquariumPlacement = { id: string; slot: number; rotation: number };
+export type AquariumPlacement = {
+  id: string;
+  slot: number;
+  rotation: number;
+  x?: number;
+  y?: number;
+};
 export type AquariumState = {
   fishIds: string[];
   placements: AquariumPlacement[];
+  reefStage?: 0 | 1 | 2 | 3;
+  upgrades?: Record<string, number>;
+  lighting?: "day" | "dawn" | "moon";
+  region?: "sun" | "coral" | "pearl" | "star";
   fishStyles?: Record<
     string,
     { name: string; color?: string; favorite?: string }
@@ -27,9 +38,30 @@ type FishMotion = {
   activity: "none" | "cave-enter" | "cave-rest" | "ring-loop";
   cooldownUntil: number;
   restNext: boolean;
+  storyUntil: number;
+};
+
+type DecorDrag = {
+  id: string;
+  slot: number;
+  pointerId: number;
+  start: XY;
+  origin: XY;
+  point: XY;
+  offset: XY;
+  bounds: DOMRect;
+  moved: boolean;
+  button: HTMLButtonElement;
 };
 
 const FISH_IDS: FishId[] = ["bobo", "sky", "glimt", "plet"];
+// Shipped WebP illustrations all face right; facing is also the travel direction.
+const NATIVE_FACING: Record<FishId, 1 | -1> = {
+  bobo: 1,
+  sky: 1,
+  glimt: 1,
+  plet: 1,
+};
 const FISH_COLORS: Record<FishId, string> = {
   bobo: "#f6a344",
   sky: "#4bbbe0",
@@ -51,6 +83,8 @@ const DECOR_NAMES: Record<string, string> = {
   bubbles: "Boblesten",
   wreck: "Trævrag",
   lantern: "Festlanterne",
+  "pearl-tree": "Perletræet",
+  "moon-gate": "Måneporten",
 };
 const SLOTS: XY[] = [
   { x: 0.17, y: 0.56 },
@@ -61,7 +95,12 @@ const SLOTS: XY[] = [
   { x: 0.85, y: 0.68 },
   { x: 0.32, y: 0.8 },
   { x: 0.68, y: 0.8 },
+  { x: 0.31, y: 0.45 },
+  { x: 0.69, y: 0.45 },
+  { x: 0.15, y: 0.8 },
+  { x: 0.85, y: 0.8 },
 ];
+const decorSource = (id: string) => id;
 const BACKDROP_LANES: Record<FishId, [number, number]> = {
   bobo: [0.31, 0.47],
   sky: [0.4, 0.55],
@@ -126,6 +165,16 @@ function decorArt(id: string, slot: number): string {
 }
 
 const ease = (t: number) => t * t * (3 - 2 * t);
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.max(lo, Math.min(hi, v));
+const pointOf = (placement: AquariumPlacement): XY => ({
+  x: Number.isFinite(placement.x)
+    ? clamp(placement.x!, 0.1, 0.9)
+    : SLOTS[placement.slot].x,
+  y: Number.isFinite(placement.y)
+    ? clamp(placement.y!, 0.38, 0.84)
+    : SLOTS[placement.slot].y,
+});
 function hue(hex: string): number {
   const value = hex.replace("#", "");
   const [r, g, b] = [0, 2, 4].map(
@@ -164,11 +213,14 @@ const bezier = (a: number, b: number, c: number, d: number, t: number) => {
 export class Aquarium {
   onFish: (id: string) => void = () => {};
   onSlot: (slot: number) => void = () => {};
+  onMove: (id: string, x: number, y: number) => void = () => {};
 
   private readonly root: HTMLDivElement;
   private readonly fishLayer: HTMLDivElement;
   private readonly slotLayer: HTMLDivElement;
   private readonly burstLayer: HTMLDivElement;
+  private readonly reefLayer: HTMLDivElement;
+  private readonly guideLayer: HTMLDivElement;
   private readonly slots: HTMLButtonElement[] = [];
   private readonly fishes = new Map<FishId, FishMotion>();
   private readonly reduced = window.matchMedia(
@@ -193,23 +245,39 @@ export class Aquarium {
   private randomState = 27381;
   private disposed = false;
   private timers: number[] = [];
+  private drag: DecorDrag | null = null;
+  private suppressClickUntil = 0;
+  private sceneSize = { width: 390, height: 844 };
 
   constructor(private readonly host: HTMLElement) {
     host.classList.add("aq-host");
     this.root = document.createElement("div");
     this.root.className = "aq-scene aq-mode-backdrop";
-    this.root.innerHTML = `<div class="aq-world"></div><div class="aq-depth"></div><div class="aq-rays"></div><div class="aq-caustics"></div><div class="aq-kelp aq-kelp-left" aria-hidden="true"></div><div class="aq-kelp aq-kelp-right" aria-hidden="true"></div><div class="aq-bubble-layer" aria-hidden="true"></div><div class="aq-slot-layer"></div><div class="aq-fish-layer"></div><div class="aq-burst-layer" aria-hidden="true"></div>`;
+    this.root.innerHTML = `<div class="aq-world"></div><div class="aq-depth"></div><div class="aq-rays"></div><div class="aq-caustics"></div><div class="aq-reef-layer" aria-hidden="true"></div><div class="aq-kelp aq-kelp-left" aria-hidden="true"></div><div class="aq-kelp aq-kelp-right" aria-hidden="true"></div><div class="aq-bubble-layer" aria-hidden="true"></div><div class="aq-slot-layer"></div><div class="aq-fish-layer"></div><div class="aq-lighting" aria-hidden="true"></div><div class="aq-guides" aria-hidden="true"><i class="aq-guide-x"></i><i class="aq-guide-y"></i><i class="aq-drag-origin"></i><span>Altid gratis at flytte</span></div><div class="aq-burst-layer" aria-hidden="true"></div>`;
     host.appendChild(this.root);
     this.paintBackground();
     this.fishLayer = this.root.querySelector<HTMLDivElement>(".aq-fish-layer")!;
     this.slotLayer = this.root.querySelector<HTMLDivElement>(".aq-slot-layer")!;
     this.burstLayer =
       this.root.querySelector<HTMLDivElement>(".aq-burst-layer")!;
+    this.reefLayer = this.root.querySelector<HTMLDivElement>(".aq-reef-layer")!;
+    this.guideLayer = this.root.querySelector<HTMLDivElement>(".aq-guides")!;
     this.buildBubbles();
     this.buildKelp();
     this.buildSlots();
     this.root.addEventListener("click", this.handleClick);
-    this.observer = new ResizeObserver(() => this.paint());
+    this.root.addEventListener("pointerdown", this.handleDragStart);
+    this.root.addEventListener("pointermove", this.handleDragMove);
+    this.root.addEventListener("pointerup", this.handleDragEnd);
+    this.root.addEventListener("pointercancel", this.handleDragCancel);
+    this.root.addEventListener("lostpointercapture", this.handleDragCancel);
+    this.observer = new ResizeObserver(([entry]) => {
+      this.sceneSize = {
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      };
+      this.paint();
+    });
     this.observer.observe(host);
     this.reduced.addEventListener("change", this.handleMotionChange);
     document.addEventListener("visibilitychange", this.handleVisibility);
@@ -226,11 +294,20 @@ export class Aquarium {
       fishIds: [...next.fishIds],
       placements: next.placements.map((p) => ({ ...p })),
       fishStyles: next.fishStyles ? { ...next.fishStyles } : undefined,
+      reefStage: next.reefStage ?? 0,
+      upgrades: { ...next.upgrades },
+      lighting: next.lighting ?? "day",
+      region: next.region ?? "sun",
     };
     const added = this.state.placements.find(
       (p) => !previous.has(`${p.id}:${p.slot}`),
     );
     if (added) this.boboFocusSlot = added.slot;
+    this.root.dataset.reef = String(this.state.reefStage);
+    this.root.dataset.lighting = this.state.lighting;
+    this.root.dataset.region = this.state.region;
+    this.paintBackground();
+    this.paintReef();
     this.syncFish();
     this.paintSlots();
   }
@@ -238,6 +315,7 @@ export class Aquarium {
   setMode(mode: AquariumMode): void {
     if (this.disposed || mode === this.mode) return;
     this.mode = mode;
+    this.cancelDrag();
     this.root.classList.toggle("aq-mode-decorate", mode === "decorate");
     this.root.classList.toggle("aq-mode-backdrop", mode === "backdrop");
     this.paintBackground();
@@ -258,6 +336,7 @@ export class Aquarium {
   setSelected(id: string | null): void {
     if (this.disposed) return;
     this.selected = id;
+    this.root.classList.toggle("aq-placing", id !== null);
     this.paintSlots();
   }
 
@@ -302,6 +381,146 @@ export class Aquarium {
     this.timers.push(window.setTimeout(() => burst.remove(), 3100));
   }
 
+  /** A tiny in-world scene, never a care obligation or a blocking cutscene. */
+  playStory(fishId: string, chapter: number): void {
+    const fish = this.fishes.get(fishId as FishId);
+    if (!fish || this.disposed) return;
+    const favorite =
+      fish.id === "sky"
+        ? "cave"
+        : fish.id === "glimt"
+          ? "ring"
+          : fish.id === "plet"
+            ? "bubbles"
+            : "arch";
+    const decor = this.decoration(favorite);
+    fish.from = { ...fish.point };
+    fish.to =
+      this.mode === "decorate" && decor
+        ? {
+            x: clamp(
+              decor.point.x + (fish.id === "sky" ? -0.03 : 0.07),
+              0.15,
+              0.85,
+            ),
+            y: decor.point.y - 0.06,
+          }
+        : this.mode === "backdrop"
+          ? this.backdropPoint({ x: 0.5, y: 0.44 })
+          : { x: 0.5, y: 0.42 };
+    fish.started = this.clock;
+    fish.duration = 1.7;
+    fish.curve = -0.06;
+    fish.storyUntil = this.clock + 4.2;
+    fish.ringStep = 0;
+    fish.activity =
+      fish.id === "glimt" && decor && this.mode === "decorate"
+        ? "ring-loop"
+        : "none";
+    fish.element.classList.add("aq-fish-story");
+    const heart = document.createElement("span");
+    heart.className = "aq-story-heart";
+    heart.textContent = chapter > 1 ? "✦ ♡ ✦" : "♡";
+    fish.element.appendChild(heart);
+    this.timers.push(
+      window.setTimeout(() => {
+        heart.remove();
+        fish.element.classList.remove("aq-fish-story");
+      }, 4300),
+    );
+    if (this.manualReducedMotion || this.reduced.matches) {
+      fish.point = { ...fish.to };
+      this.paintFish(fish, this.clock);
+    }
+  }
+
+  /** Render only the aquarium artwork, not menus or personal account data. */
+  async exportPostcard(): Promise<Blob> {
+    const width = this.sceneSize.width,
+      height = this.sceneSize.height;
+    const sprites: PostcardSprite[] = [];
+    const hostRect = this.host.getBoundingClientRect();
+    const imageSprite = (image: HTMLImageElement): PostcardSprite => {
+      const rect = image.getBoundingClientRect(),
+        style = getComputedStyle(image);
+      return {
+        src: image.src,
+        x: (rect.left - hostRect.left + rect.width / 2) / width,
+        y: (rect.top - hostRect.top + rect.height / 2) / height,
+        width: rect.width / width,
+        height: rect.height / height,
+        opacity: Number(style.opacity),
+        filter: style.filter,
+      };
+    };
+    for (const sprite of Array.from(
+      this.reefLayer.querySelectorAll<HTMLImageElement>(".aq-reef-art"),
+    )) {
+      sprites.push(imageSprite(sprite));
+    }
+    if (this.mode === "decorate")
+      for (const placement of this.state.placements) {
+        const button = this.slots[placement.slot];
+        button
+          .querySelectorAll<HTMLImageElement>(".aq-upgrade-wings img")
+          .forEach((image) => {
+            sprites.push({
+              ...imageSprite(image),
+              flip:
+                image.classList.contains("aq-upgrade-right") !==
+                (placement.rotation === 2),
+            });
+          });
+        const sprite =
+          button.querySelector<HTMLImageElement>(".aq-decor-sprite");
+        if (sprite)
+          sprites.push({
+            ...imageSprite(sprite),
+            flip: placement.rotation === 2,
+          });
+      }
+    for (const fish of this.fishes.values()) {
+      const rect = fish.element.getBoundingClientRect();
+      const shift = fish.element.style.getPropertyValue("--tint-shift");
+      sprites.push({
+        src: `${this.assetRoot}fish-${fish.id}.webp`,
+        ...fish.point,
+        width: rect.width / width,
+        height: rect.height / height,
+        flip: fish.facing !== NATIVE_FACING[fish.id],
+        filter: shift ? `hue-rotate(${shift})` : undefined,
+        opacity: fish.element.classList.contains("aq-fish-behind") ? 0.58 : 1,
+      });
+    }
+    return renderPostcard({
+      width,
+      height,
+      background: this.backgroundUrl(),
+      fallbackBackground: `${this.assetRoot}underwater-aquarium.webp`,
+      sprites,
+      lighting: this.state.lighting ?? "day",
+      reefStage: this.state.reefStage ?? 0,
+      region: this.state.region ?? "sun",
+      minnows:
+        this.state.reefStage === 3
+          ? Array.from(
+              this.reefLayer.querySelectorAll<HTMLElement>(
+                ".aq-minnow-school i",
+              ),
+            ).map((minnow) => {
+              const rect = minnow.getBoundingClientRect();
+              return {
+                x: (rect.left - hostRect.left + rect.width / 2) / width,
+                y: (rect.top - hostRect.top + rect.height / 2) / height,
+                width: rect.width / width,
+                height: rect.height / height,
+              };
+            })
+          : [],
+      title: "Livs magiske akvarie",
+    });
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -310,6 +529,11 @@ export class Aquarium {
     this.reduced.removeEventListener("change", this.handleMotionChange);
     document.removeEventListener("visibilitychange", this.handleVisibility);
     this.root.removeEventListener("click", this.handleClick);
+    this.root.removeEventListener("pointerdown", this.handleDragStart);
+    this.root.removeEventListener("pointermove", this.handleDragMove);
+    this.root.removeEventListener("pointerup", this.handleDragEnd);
+    this.root.removeEventListener("pointercancel", this.handleDragCancel);
+    this.root.removeEventListener("lostpointercapture", this.handleDragCancel);
     for (const timer of this.timers) clearTimeout(timer);
     this.root.remove();
     this.host.classList.remove("aq-host");
@@ -323,12 +547,40 @@ export class Aquarium {
 
   private paintBackground(): void {
     const world = `${this.assetRoot}underwater-world.webp`;
-    const image =
-      this.mode === "decorate"
-        ? `url("${this.assetRoot}underwater-aquarium.webp"), url("${world}")`
-        : `url("${world}")`;
+    const image = `url("${this.backgroundUrl()}"), url("${this.assetRoot}underwater-aquarium.webp"), url("${world}")`;
     this.root.querySelector<HTMLElement>(".aq-world")!.style.backgroundImage =
       `${image}, linear-gradient(160deg,#99e3e7,#1e728a 72%,#174b64)`;
+  }
+
+  private backgroundUrl(): string {
+    const region = this.state.region ?? "sun";
+    return `${this.assetRoot}${region === "sun" ? (this.mode === "decorate" ? "underwater-aquarium" : "underwater-world") : `region-${region}`}.webp`;
+  }
+
+  private upgradeLevel(id: string): number {
+    return id === "ring" || id === "cave"
+      ? clamp(Math.floor(this.state.upgrades?.[id] ?? 0), 0, 2)
+      : 0;
+  }
+
+  private paintReef(): void {
+    const stage = this.state.reefStage ?? 0;
+    if (this.reefLayer.dataset.stage === String(stage)) return;
+    this.reefLayer.dataset.stage = String(stage);
+    const positions = [
+      { id: "arch", x: 6, y: 67, size: 24 },
+      { id: "seagrass", x: 93, y: 73, size: 21 },
+      { id: "arch", x: 96, y: 59, size: 19 },
+      { id: "seagrass", x: 1, y: 82, size: 20 },
+    ];
+    this.reefLayer.innerHTML =
+      positions
+        .map(
+          (p, i) =>
+            `<img class="aq-reef-art" src="${this.assetRoot}decor-${p.id}.webp" alt="" style="left:${p.x}%;top:${p.y}%;width:${p.size}%;--reef-delay:${i * 0.16}s">`,
+        )
+        .join("") +
+      `<div class="aq-reef-glow"></div><div class="aq-minnow-school">${Array.from({ length: 7 }, (_, i) => `<i style="--i:${i};--delay:${i * -0.23}s"></i>`).join("")}</div>`;
   }
 
   private buildBubbles(): void {
@@ -374,16 +626,29 @@ export class Aquarium {
   private paintSlots(): void {
     this.slots.forEach((button, slot) => {
       const placement = this.state.placements.find((p) => p.slot === slot);
+      const point = placement ? pointOf(placement) : SLOTS[slot];
+      button.style.setProperty("--x", `${point.x * 100}%`);
+      button.style.setProperty("--y", `${point.y * 100}%`);
+      button.style.setProperty("--depth-scale", String(0.66 + point.y * 0.55));
+      button.classList.toggle(
+        "aq-slot-selected",
+        placement?.id === this.selected,
+      );
+      button.dataset.decor = placement?.id ?? "";
       button.classList.toggle("aq-slot-empty", !placement);
       button.classList.toggle("aq-slot-ready", !placement && !!this.selected);
       button.classList.toggle("aq-slot-filled", !!placement);
       button.setAttribute(
         "aria-label",
         placement
-          ? `${DECOR_NAMES[placement.id] ?? "Dekoration"} på plads ${slot + 1}. Tryk for at flytte eller undersøge.`
+          ? `${DECOR_NAMES[placement.id] ?? "Dekoration"} på plads ${slot + 1}. Træk for at flytte. Tryk for at undersøge.`
           : `Tom dekorationsplads ${slot + 1}${this.selected ? `: placér ${DECOR_NAMES[this.selected] ?? "dekoration"}` : ""}`,
       );
       const shown = placement?.id;
+      button.classList.toggle("aq-rare-pearl", shown === "pearl-tree");
+      button.classList.toggle("aq-rare-moon", shown === "moon-gate");
+      const upgrade = shown ? this.upgradeLevel(shown) : 0;
+      button.dataset.upgrade = String(upgrade);
       button.style.setProperty(
         "--object-scale",
         shown === "cave" ? "1.28" : shown === "ring" ? "1.15" : "1",
@@ -401,7 +666,7 @@ export class Aquarium {
         `${quarter === 1 ? -3 : quarter === 3 ? 3 : 0}deg`,
       );
       button.innerHTML = shown
-        ? `<span class="aq-decor-art"><span class="aq-decor-svg">${decorArt(shown, slot)}</span><img class="aq-decor-sprite" src="${this.assetRoot}decor-${shown}.webp" alt="" draggable="false"></span>`
+        ? `<span class="aq-decor-art">${upgrade ? `<span class="aq-upgrade-wings aq-upgrade-${shown}"><img class="aq-upgrade-left" src="${this.assetRoot}decor-${shown}.webp" alt="" draggable="false">${upgrade > 1 ? `<img class="aq-upgrade-right" src="${this.assetRoot}decor-${shown}.webp" alt="" draggable="false">` : ""}<i></i><i></i></span>` : ""}<span class="aq-decor-svg">${decorArt(decorSource(shown), slot)}</span><img class="aq-decor-sprite" src="${this.assetRoot}decor-${decorSource(shown)}.webp" alt="" draggable="false">${shown === "pearl-tree" ? `<span class="aq-pearl-fruit">${"<i></i>".repeat(5)}</span>` : shown === "moon-gate" ? `<span class="aq-moon-portal"><i>☾</i>${"<b>✦</b>".repeat(3)}</span>` : ""}</span>${upgrade ? `<span class="aq-upgrade-badge" aria-label="Opgraderet ${upgrade} gange">${"✦".repeat(upgrade)}</span>` : ""}`
         : '<span class="aq-slot-empty-mark" aria-hidden="true">＋</span>';
       const sprite = button.querySelector<HTMLImageElement>(".aq-decor-sprite");
       if (sprite) {
@@ -518,6 +783,7 @@ export class Aquarium {
         activity: "none",
         cooldownUntil: 0,
         restNext: false,
+        storyUntil: 0,
       };
       this.fishes.set(id, motion);
       this.paintFish(motion, 0);
@@ -534,7 +800,7 @@ export class Aquarium {
         p.slot >= 0 &&
         p.slot < SLOTS.length,
     );
-    return placement ? { placement, point: SLOTS[placement.slot] } : null;
+    return placement ? { placement, point: pointOf(placement) } : null;
   }
 
   private nextTarget(fish: FishMotion): void {
@@ -544,6 +810,12 @@ export class Aquarium {
     fish.curve =
       (this.rand() - 0.5) *
       (this.mode === "decorate" ? 0.13 : this.backdropArea().height * 0.13);
+    if (fish.storyUntil > this.clock && fish.activity !== "ring-loop") {
+      fish.to = { ...fish.point };
+      fish.duration = Math.max(0.2, fish.storyUntil - this.clock);
+      fish.curve = 0;
+      return;
+    }
     if (this.mode === "backdrop") {
       const [lo, hi] = BACKDROP_LANES[fish.id];
       fish.to = this.backdropPoint({
@@ -564,13 +836,24 @@ export class Aquarium {
       fish.activity = "none";
       fish.cooldownUntil = this.clock + 10 + this.rand() * 8;
       const cave = this.decoration("cave");
+      const caveLevel = this.upgradeLevel("cave");
       fish.to = cave
         ? {
             x: Math.max(
               0.18,
-              Math.min(0.82, cave.point.x + (this.rand() < 0.5 ? -0.15 : 0.15)),
+              Math.min(
+                0.82,
+                cave.point.x +
+                  (caveLevel
+                    ? this.rand() < 0.5
+                      ? -0.085
+                      : 0.085
+                    : this.rand() < 0.5
+                      ? -0.15
+                      : 0.15),
+              ),
             ),
-            y: Math.max(0.2, cave.point.y - 0.14),
+            y: Math.max(0.2, cave.point.y - (caveLevel ? 0.035 : 0.14)),
           }
         : { x: 0.7, y: 0.37 };
       fish.duration = 2.8;
@@ -578,13 +861,25 @@ export class Aquarium {
     }
     if (fish.activity === "ring-loop") {
       const ring = this.decoration("ring");
-      if (ring && fish.ringStep < 4) {
+      const ringLevel = this.upgradeLevel("ring");
+      if (ring && fish.ringStep < 4 + ringLevel * 2) {
         const pass = fish.ringStep++;
+        const circuit = [-0.15, -0.065, 0.025, 0.15, 0.065, -0.025];
         fish.to = {
-          x: ring.point.x + (pass % 2 ? 0.105 : -0.105),
-          y: ring.point.y - 0.025,
+          x: clamp(
+            ring.point.x +
+              (ringLevel
+                ? circuit[pass % circuit.length]
+                : pass % 2
+                  ? 0.105
+                  : -0.105),
+            0.1,
+            0.9,
+          ),
+          y: ring.point.y - (ringLevel ? 0.035 + (pass % 3) * 0.012 : 0.025),
         };
-        fish.duration = 2.1;
+        fish.duration = ringLevel ? 1.2 : 2.1;
+        fish.curve = ringLevel ? -0.025 : 0;
         return;
       }
       fish.activity = "none";
@@ -599,7 +894,10 @@ export class Aquarium {
       return;
     }
     if (fish.id === "bobo" && this.boboFocusSlot !== null) {
-      const point = SLOTS[this.boboFocusSlot];
+      const placed = this.state.placements.find(
+        (p) => p.slot === this.boboFocusSlot,
+      );
+      const point = placed ? pointOf(placed) : SLOTS[this.boboFocusSlot];
       fish.to = { x: point.x + 0.05, y: point.y - 0.09 };
       fish.duration = 4.5;
       fish.restNext = this.rand() < 0.72;
@@ -608,7 +906,13 @@ export class Aquarium {
     }
     const favorite = this.state.fishStyles?.[fish.id]?.favorite;
     const custom = favorite ? this.decoration(favorite) : null;
-    if (custom && this.clock >= fish.cooldownUntil && this.rand() < 0.72) {
+    if (
+      custom &&
+      !(fish.id === "sky" && favorite === "cave") &&
+      !(fish.id === "glimt" && favorite === "ring") &&
+      this.clock >= fish.cooldownUntil &&
+      this.rand() < 0.72
+    ) {
       fish.to = { x: custom.point.x + 0.045, y: custom.point.y - 0.075 };
       fish.duration = 4.2 + this.rand() * 1.8;
       fish.restNext = this.rand() < 0.7;
@@ -625,7 +929,7 @@ export class Aquarium {
         return;
       }
     }
-    if (!custom && fish.id === "sky") {
+    if ((!custom || favorite === "cave") && fish.id === "sky") {
       const cave = this.decoration("cave");
       if (cave && this.clock >= fish.cooldownUntil && this.rand() < 0.68) {
         fish.to = { x: cave.point.x, y: cave.point.y - 0.025 };
@@ -634,7 +938,7 @@ export class Aquarium {
         return;
       }
     }
-    if (!custom && fish.id === "glimt") {
+    if ((!custom || favorite === "ring") && fish.id === "glimt") {
       const ring = this.decoration("ring");
       if (ring && this.clock >= fish.cooldownUntil && this.rand() < 0.72) {
         fish.activity = "ring-loop";
@@ -664,9 +968,11 @@ export class Aquarium {
   }
 
   private paintFish(fish: FishMotion, time: number): void {
-    fish.element.style.left = `${fish.point.x * 100}%`;
-    fish.element.style.top = `${fish.point.y * 100}%`;
-    fish.element.style.setProperty("--facing", String(fish.facing));
+    fish.element.style.transform = `translate3d(${(fish.point.x * this.sceneSize.width).toFixed(2)}px,${(fish.point.y * this.sceneSize.height).toFixed(2)}px,0) translate(-50%,-50%)`;
+    fish.element.style.setProperty(
+      "--facing",
+      String(fish.facing * NATIVE_FACING[fish.id]),
+    );
     fish.element.style.setProperty(
       "--pitch",
       `${Math.sin(time * 2.1 + FISH_IDS.indexOf(fish.id)) * 2.2}deg`,
@@ -745,7 +1051,165 @@ export class Aquarium {
     else this.start();
   }
 
+  private handleDragStart = (event: PointerEvent): void => {
+    if (
+      this.mode !== "decorate" ||
+      this.drag ||
+      !event.isPrimary ||
+      event.button !== 0
+    )
+      return;
+    const button = (event.target as Element).closest<HTMLButtonElement>(
+      ".aq-slot-filled",
+    );
+    if (!button || button.dataset.slot === undefined) return;
+    const placement = this.state.placements.find(
+      (p) => p.slot === Number(button.dataset.slot),
+    );
+    if (!placement) return;
+    const bounds = this.host.getBoundingClientRect(),
+      point = pointOf(placement);
+    this.drag = {
+      id: placement.id,
+      slot: placement.slot,
+      pointerId: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      origin: { ...point },
+      point: { ...point },
+      offset: {
+        x: (event.clientX - bounds.left) / bounds.width - point.x,
+        y: (event.clientY - bounds.top) / bounds.height - point.y,
+      },
+      bounds,
+      moved: false,
+      button,
+    };
+    button.setPointerCapture(event.pointerId);
+  };
+
+  private handleDragMove = (event: PointerEvent): void => {
+    const drag = this.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (
+      !drag.moved &&
+      Math.hypot(event.clientX - drag.start.x, event.clientY - drag.start.y) < 6
+    )
+      return;
+    event.preventDefault();
+    drag.moved = true;
+    const point = {
+      x: clamp(
+        (event.clientX - drag.bounds.left) / drag.bounds.width - drag.offset.x,
+        0.1,
+        0.9,
+      ),
+      y: clamp(
+        (event.clientY - drag.bounds.top) / drag.bounds.height - drag.offset.y,
+        0.38,
+        0.84,
+      ),
+    };
+    const anchors = [
+      ...SLOTS,
+      ...this.state.placements.filter((p) => p.id !== drag.id).map(pointOf),
+    ];
+    const nearX = anchors.reduce(
+      (best, p) =>
+        Math.abs(p.x - point.x) < Math.abs(best.x - point.x) ? p : best,
+      anchors[0],
+    );
+    const nearY = anchors.reduce(
+      (best, p) =>
+        Math.abs(p.y - point.y) < Math.abs(best.y - point.y) ? p : best,
+      anchors[0],
+    );
+    const snapX = Math.abs(nearX.x - point.x) * drag.bounds.width < 9;
+    const snapY = Math.abs(nearY.y - point.y) * drag.bounds.height < 9;
+    if (snapX) point.x = nearX.x;
+    if (snapY) point.y = nearY.y;
+    drag.point = point;
+    drag.button.style.setProperty("--x", `${point.x * 100}%`);
+    drag.button.style.setProperty("--y", `${point.y * 100}%`);
+    drag.button.style.setProperty(
+      "--depth-scale",
+      String(0.66 + point.y * 0.55),
+    );
+    drag.button.classList.add("aq-slot-dragging");
+    this.guideLayer.classList.add("aq-guides-visible");
+    this.guideLayer.classList.toggle("aq-snap-x", snapX);
+    this.guideLayer.classList.toggle("aq-snap-y", snapY);
+    this.guideLayer.style.setProperty("--guide-x", `${point.x * 100}%`);
+    this.guideLayer.style.setProperty("--guide-y", `${point.y * 100}%`);
+    this.guideLayer.style.setProperty("--origin-x", `${drag.origin.x * 100}%`);
+    this.guideLayer.style.setProperty("--origin-y", `${drag.origin.y * 100}%`);
+  };
+
+  private handleDragEnd = (event: PointerEvent): void => {
+    const drag = this.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    this.drag = null;
+    drag.button.classList.remove("aq-slot-dragging");
+    this.guideLayer.classList.remove(
+      "aq-guides-visible",
+      "aq-snap-x",
+      "aq-snap-y",
+    );
+    if (drag.button.hasPointerCapture(event.pointerId))
+      drag.button.releasePointerCapture(event.pointerId);
+    if (!drag.moved) return;
+    this.suppressClickUntil = performance.now() + 350;
+    if (
+      Math.hypot(drag.point.x - drag.origin.x, drag.point.y - drag.origin.y) <
+      0.001
+    )
+      return;
+    const placement = this.state.placements.find((p) => p.id === drag.id);
+    if (placement) {
+      placement.x = drag.point.x;
+      placement.y = drag.point.y;
+    }
+    this.boboFocusSlot = drag.slot;
+    drag.button.classList.add("aq-slot-placed");
+    this.timers.push(
+      window.setTimeout(
+        () => drag.button.classList.remove("aq-slot-placed"),
+        400,
+      ),
+    );
+    this.onMove(
+      drag.id,
+      Math.round(drag.point.x * 10000) / 10000,
+      Math.round(drag.point.y * 10000) / 10000,
+    );
+  };
+
+  private handleDragCancel = (event: PointerEvent): void => {
+    if (this.drag?.pointerId === event.pointerId) this.cancelDrag();
+  };
+
+  private cancelDrag(): void {
+    const drag = this.drag;
+    if (!drag) return;
+    this.drag = null;
+    drag.button.style.setProperty("--x", `${drag.origin.x * 100}%`);
+    drag.button.style.setProperty("--y", `${drag.origin.y * 100}%`);
+    drag.button.style.setProperty(
+      "--depth-scale",
+      String(0.66 + drag.origin.y * 0.55),
+    );
+    drag.button.classList.remove("aq-slot-dragging");
+    this.guideLayer.classList.remove(
+      "aq-guides-visible",
+      "aq-snap-x",
+      "aq-snap-y",
+    );
+    if (drag.button.hasPointerCapture(drag.pointerId))
+      drag.button.releasePointerCapture(drag.pointerId);
+    if (drag.moved) this.suppressClickUntil = performance.now() + 350;
+  }
+
   private handleClick = (event: MouseEvent): void => {
+    if (event.isTrusted && performance.now() < this.suppressClickUntil) return;
     const target = event.target as Element;
     const fish = target.closest<HTMLElement>("[data-fish]");
     if (fish?.dataset.fish) {

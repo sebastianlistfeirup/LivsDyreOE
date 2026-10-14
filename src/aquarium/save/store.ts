@@ -7,8 +7,24 @@ import {
 } from "../core";
 import { getLevel } from "../content/levels";
 import { DECORATIONS, FISH } from "../content/catalog";
+import {
+  emptyAdventure,
+  adventureOf,
+  reserveFirstWin,
+  spendableShells,
+  rareStage,
+  REGIONS,
+  REEF_PROJECTS,
+  type Adventure,
+} from "../content/progression";
 
-export type Placement = { id: string; slot: number; rotation: number };
+export type Placement = {
+  id: string;
+  slot: number;
+  rotation: number;
+  x?: number;
+  y?: number;
+};
 export type Save = {
   project: "livs-akvarie";
   version: 1;
@@ -24,7 +40,13 @@ export type Save = {
     { name: string; favorite?: string; color?: string }
   >;
   settings: { sound: boolean; hints: boolean; reducedMotion: boolean };
-  active: { board: BoardState; pending: Action | null; rewarded: boolean };
+  active: {
+    board: BoardState;
+    pending: Action | null;
+    rewarded: boolean;
+    legacy?: boolean;
+  };
+  adventure?: Adventure;
   tutorialSeen: boolean;
 };
 
@@ -50,6 +72,7 @@ export function freshSave(): Save {
     },
     active: { board: createBoard(1), pending: null, rewarded: false },
     tutorialSeen: false,
+    adventure: emptyAdventure(),
   };
 }
 
@@ -74,6 +97,76 @@ function validAction(value: unknown): value is Action | null {
     : a.kind === "use" && cell(a.cell);
 }
 
+function validAdventure(save: Save): boolean {
+  const p = save.adventure;
+  if (
+    !p ||
+    typeof p !== "object" ||
+    ![0, 1, 2, 3].includes(p.reefStage) ||
+    !Number.isSafeInteger(p.reefSavings) ||
+    p.reefSavings < 0 ||
+    p.reefSavings > save.shells
+  )
+    return false;
+  const spent = REEF_PROJECTS.slice(0, p.reefStage).reduce(
+    (n, project) => n + project.price,
+    0,
+  );
+  if (
+    p.reefSavings > 220 - spent ||
+    REEF_PROJECTS.slice(0, p.reefStage).some(
+      (project) => !save.completed.includes(project.after),
+    )
+  )
+    return false;
+  if (
+    !["reef", "cave", "ring", "pearl-tree", "moon-gate"].includes(p.goal) ||
+    !["day", "dawn", "moon"].includes(p.lighting) ||
+    !REGIONS.some((r) => r.id === p.region && r.stage <= p.reefStage)
+  )
+    return false;
+  if (!integers(p.seenTutorials, 1, 30)) return false;
+  if (
+    !p.upgrades ||
+    Array.isArray(p.upgrades) ||
+    typeof p.upgrades !== "object" ||
+    Object.entries(p.upgrades).some(
+      ([id, n]) =>
+        !["cave", "ring"].includes(id) ||
+        !save.decorations.includes(id) ||
+        !Number.isInteger(n) ||
+        n < 0 ||
+        n > 2,
+    )
+  )
+    return false;
+  if (
+    !p.stories ||
+    Array.isArray(p.stories) ||
+    typeof p.stories !== "object" ||
+    Object.entries(p.stories).some(
+      ([id, n]) =>
+        !save.fishIds.includes(id) || !Number.isInteger(n) || n < 0 || n > 2,
+    )
+  )
+    return false;
+  return true;
+}
+
+/** Additive upgrade: keep the old board, wallet, fish, and any pending intent. */
+export function prepareSave(save: Save): Save {
+  if (!save.adventure) {
+    save.adventure = emptyAdventure();
+    // Previously earned shells stay spendable. Existing players receive the
+    // missing earmarked savings exactly once, recorded in this same save.
+    save.adventure.reefSavings = Math.min(220, save.completed.length * 10);
+    save.shells += save.adventure.reefSavings;
+  }
+  if (save.active.board.voids === undefined && save.active.board.levelId <= 10)
+    save.active.legacy = true;
+  return save;
+}
+
 export function validateSave(value: unknown): value is Save {
   if (!value || typeof value !== "object") return false;
   const s = value as Save;
@@ -88,8 +181,8 @@ export function validateSave(value: unknown): value is Save {
     !Number.isSafeInteger(s.shells) ||
     s.shells < 0 ||
     s.shells > 1e8 ||
-    !integers(s.completed, 1, 10) ||
-    !integers(s.claimed, 1, 10)
+    !integers(s.completed, 1, 30) ||
+    !integers(s.claimed, 1, 30)
   )
     return false;
   if (
@@ -122,8 +215,15 @@ export function validateSave(value: unknown): value is Save {
         !s.decorations.includes(p.id) ||
         !Number.isInteger(p.slot) ||
         p.slot < 0 ||
-        p.slot > 7 ||
-        ![0, 1, 2, 3].includes(p.rotation),
+        p.slot > 11 ||
+        ![0, 1, 2, 3].includes(p.rotation) ||
+        ((p.x !== undefined || p.y !== undefined) &&
+          (!Number.isFinite(p.x) ||
+            !Number.isFinite(p.y) ||
+            p.x! < 0.1 ||
+            p.x! > 0.9 ||
+            p.y! < 0.38 ||
+            p.y! > 0.84)),
     )
   )
     return false;
@@ -158,6 +258,7 @@ export function validateSave(value: unknown): value is Save {
   if (
     !s.active ||
     typeof s.active.rewarded !== "boolean" ||
+    (s.active.legacy !== undefined && typeof s.active.legacy !== "boolean") ||
     !validAction(s.active.pending)
   )
     return false;
@@ -166,7 +267,7 @@ export function validateSave(value: unknown): value is Save {
     !b ||
     !Number.isInteger(b.levelId) ||
     b.levelId < 1 ||
-    b.levelId > 10 ||
+    b.levelId > 30 ||
     !Number.isInteger(b.movesRemaining) ||
     b.movesRemaining < 0 ||
     b.movesRemaining > 10000 ||
@@ -175,6 +276,28 @@ export function validateSave(value: unknown): value is Save {
     b.nextId < 1 ||
     !Number.isSafeInteger(b.turnId) ||
     b.turnId < 0
+  )
+    return false;
+  if (s.adventure !== undefined && !validAdventure(s)) return false;
+  for (const values of [b.voids, b.rocks, b.bubbles]) {
+    if (
+      values !== undefined &&
+      (!Array.isArray(values) ||
+        values.length !== 64 ||
+        values.some((v) => typeof v !== "boolean"))
+    )
+      return false;
+  }
+  if (
+    b.clams !== undefined &&
+    (!Array.isArray(b.clams) ||
+      b.clams.length !== 64 ||
+      b.clams.some((v) => !Number.isInteger(v) || v < 0 || v > 2))
+  )
+    return false;
+  if (
+    b.gravity !== undefined &&
+    !["down", "up", "left", "right"].includes(b.gravity)
   )
     return false;
   if (
@@ -186,7 +309,7 @@ export function validateSave(value: unknown): value is Save {
     return false;
   if (
     b.tiles.some((t, i) =>
-      b.blockers[i]
+      b.blockers[i] || b.voids?.[i] || b.rocks?.[i] || (b.clams?.[i] ?? 0) > 0
         ? t !== null
         : !t ||
           !Number.isSafeInteger(t.id) ||
@@ -209,11 +332,43 @@ export function validateSave(value: unknown): value is Save {
   )
     return false;
   const definition = getLevel(b.levelId);
+  const legacy = b.levelId <= 10 && (s.active.legacy || b.voids === undefined);
+  const legacyCoral =
+    b.levelId === 5
+      ? [18, 21, 26, 29, 34, 37]
+      : b.levelId === 9
+        ? [24, 25, 26, 27, 28, 29, 30, 31]
+        : [];
+  const legacySand =
+    b.levelId === 4
+      ? [56, 57, 58, 59, 60, 61, 62, 63]
+      : b.levelId === 6
+        ? [48, 49, 50, 51, 52, 53, 54, 55]
+        : [8, 10].includes(b.levelId)
+          ? [42, 43, 44, 45, 50, 51, 52, 53, 58, 59, 60, 61]
+          : [];
   if (
     b.blockers.some(
-      (blocked, i) => blocked && (!definition.coral.includes(i) || b.sand[i]),
+      (blocked, i) =>
+        blocked &&
+        (!(legacy ? legacyCoral : definition.coral).includes(i) ||
+          b.sand[i] ||
+          b.voids?.[i] ||
+          b.rocks?.[i] ||
+          b.clams?.[i]),
     ) ||
-    b.sand.some((sand, i) => sand && !definition.sand.includes(i))
+    b.sand.some(
+      (sand, i) =>
+        sand &&
+        (!(legacy ? legacySand : definition.sand).includes(i) ||
+          b.voids?.[i] ||
+          b.rocks?.[i] ||
+          b.clams?.[i]),
+    ) ||
+    b.voids?.some(
+      (hole, i) => hole && (b.rocks?.[i] || b.clams?.[i] || b.bubbles?.[i]),
+    ) ||
+    b.rocks?.some((rock, i) => rock && (b.clams?.[i] || b.bubbles?.[i]))
   )
     return false;
   if (
@@ -260,6 +415,7 @@ export function loadSave(): { save: Save; warning?: string; backup?: Save } {
     const parsed: unknown = JSON.parse(raw);
     if (!validateSave(parsed))
       throw new Error("Denne gemning har et ukendt format.");
+    prepareSave(parsed);
     if (parsed.active.pending) {
       parsed.active.board = playTurn(
         parsed.active.board,
@@ -275,7 +431,10 @@ export function loadSave(): { save: Save; warning?: string; backup?: Save } {
       const candidate: unknown = JSON.parse(
         localStorage.getItem(BACKUP_KEY) || "null",
       );
-      if (validateSave(candidate)) backup = candidate;
+      if (validateSave(candidate)) {
+        prepareSave(candidate);
+        backup = candidate;
+      }
     } catch {
       /* Report, never erase the broken save. */
     }
@@ -292,9 +451,11 @@ export function awardWin(save: Save): number {
   if (save.active.rewarded || !isWon(save.active.board)) return 0;
   const id = save.active.board.levelId;
   const reward = save.claimed.includes(id) ? 10 : 40;
+  const first = !save.claimed.includes(id);
   if (!save.claimed.includes(id)) save.claimed.push(id);
   if (!save.completed.includes(id)) save.completed.push(id);
   save.shells += reward;
+  if (first) reserveFirstWin(save);
   save.active.rewarded = true;
   return reward;
 }
@@ -312,13 +473,15 @@ export function purchase(
   if (!item) return "Den ting findes ikke.";
   if ((category === "fish" ? save.fishIds : save.decorations).includes(id))
     return "Den har du allerede.";
-  if (save.shells < item.price)
-    return `Du mangler ${item.price - save.shells} skaller. Spil en bane for at samle flere.`;
+  if (category === "decor" && adventureOf(save).reefStage < rareStage(id))
+    return "Åbn først området gennem revprojektet.";
+  if (spendableShells(save) < item.price)
+    return `Du mangler ${item.price - spendableShells(save)} frie skaller. Revopsparingen er beskyttet.`;
   if (
     category === "decor" &&
     (!Number.isInteger(slot) ||
       slot! < 0 ||
-      slot! > 7 ||
+      slot! > 11 ||
       save.placements.some((p) => p.slot === slot))
   )
     return "Vælg en ledig plads først.";

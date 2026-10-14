@@ -5,6 +5,7 @@ import {
   grantMoves,
   isWon,
   playTurn,
+  isOccupied,
   type BoardState,
   type Tile,
   type TileType,
@@ -20,8 +21,10 @@ function settledInvariants(board: BoardState): void {
   const ids = board.tiles.flatMap((tile) => (tile ? [tile.id] : []));
   expect(new Set(ids).size).toBe(ids.length);
   for (let cell = 0; cell < 64; cell++) {
-    expect(Boolean(board.tiles[cell])).toBe(!board.blockers[cell]);
-    expect(board.blockers[cell] && board.sand[cell]).toBe(false);
+    expect(Boolean(board.tiles[cell])).toBe(!isOccupied(board, cell));
+    expect(isOccupied(board, cell) && board.sand[cell]).toBe(false);
+    expect(board.clams?.[cell] ?? 0).toBeGreaterThanOrEqual(0);
+    expect(board.clams?.[cell] ?? 0).toBeLessThanOrEqual(2);
   }
   for (const objective of board.objectives) {
     expect(objective.collected).toBeGreaterThanOrEqual(0);
@@ -179,9 +182,9 @@ describe("settled-board invariants", () => {
   it("survives 1,000 seeded turns across every obstacle and objective type", () => {
     let selection = 0x6d2b79f5;
     let turns = 0;
-    for (let level = 1; level <= 10; level++) {
+    for (let level = 1; level <= 30; level++) {
       let board = createBoard(level, 0x1988 + level);
-      for (let step = 0; step < 100; step++) {
+      for (let step = 0; step < (level <= 10 ? 34 : 33); step++) {
         if (isWon(board))
           board = createBoard(level, 0x1988 + level * 101 + step);
         if (board.movesRemaining === 0) board = grantMoves(board);
@@ -200,6 +203,12 @@ describe("settled-board invariants", () => {
         expect(finalEvent.tiles).toEqual(result.state.tiles);
         expect(finalEvent.blockers).toEqual(result.state.blockers);
         expect(finalEvent.sand).toEqual(result.state.sand);
+        expect(finalEvent.clams).toEqual(result.state.clams);
+        expect(finalEvent.gravity).toEqual(result.state.gravity);
+        expect(result.state.voids).toEqual(board.voids);
+        expect(result.state.rocks).toEqual(board.rocks);
+        expect(result.state.bubbles).toEqual(board.bubbles);
+        board.clams?.forEach((hp, cell) => expect(result.state.clams![cell]).toBeLessThanOrEqual(hp));
         for (let index = 0; index < board.objectives.length; index++) {
           expect(
             result.state.objectives[index].collected,
@@ -226,5 +235,5 @@ describe("settled-board invariants", () => {
       }
     }
     expect(turns).toBe(1000);
-  }, 20_000);
+  }, 30_000);
 });

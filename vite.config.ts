@@ -1,28 +1,21 @@
 import { defineConfig } from "vite";
+import { readdirSync } from "node:fs";
 
 export default defineConfig({
   base: "/LivsDyreOE/",
-  define: { __BUILD_VERSION__: JSON.stringify("akvarie-0.1.0") },
+  define: { __BUILD_VERSION__: JSON.stringify("magiske-0.2.0") },
   plugins: [
     {
       name: "aquarium-offline-cache",
       generateBundle(_options, bundle) {
         const version = `livs-akvarie-${Date.now()}`;
-        const art = [
-          "underwater-world",
-          "underwater-aquarium",
-          ...["bobo", "sky", "glimt", "plet"].map((id) => `fish-${id}`),
-          ...[
-            "seagrass",
-            "cave",
-            "ring",
-            "arch",
-            "clam",
-            "bubbles",
-            "wreck",
-            "lantern",
-          ].map((id) => `decor-${id}`),
-        ];
+        const art = readdirSync(
+          new URL("./public/aquarium/art/", import.meta.url),
+          { recursive: true },
+        ).filter(
+          (file): file is string =>
+            typeof file === "string" && /\.(webp|png|svg)$/.test(file),
+        );
         const urls = [
           "./",
           "./manifest.webmanifest",
@@ -32,7 +25,7 @@ export default defineConfig({
           ...Object.keys(bundle)
             .filter((file) => /\.(js|css|woff2)$/.test(file))
             .map((file) => `./${file}`),
-          ...art.map((id) => `./aquarium/art/${id}.webp`),
+          ...art.map((file) => `./aquarium/art/${file}`),
         ];
         this.emitFile({
           type: "asset",

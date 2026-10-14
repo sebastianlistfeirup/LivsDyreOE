@@ -94,6 +94,21 @@ export const DECORATIONS = [
     icon: "🏮",
     description: "Et varmt skær til akvariets fest.",
   },
+  {
+    id: "pearl-tree",
+    name: "Perletræet",
+    price: 100,
+    icon: "✧",
+    description: "Sjælden koralskat med lysende perler. Åbnes i Perlelagunen.",
+  },
+  {
+    id: "moon-gate",
+    name: "Måneporten",
+    price: 140,
+    icon: "☾",
+    description:
+      "En iriserende port til stjernernes hav. Åbnes i Stjernedybet.",
+  },
 ] as const;
 
 export const TYPE_NAMES = [
@@ -112,4 +127,5 @@ export const KIND_NAMES: Record<string, string> = {
   sand: "sand",
   coral: "koraller",
   special: "specialbrikker",
+  clam: "muslinger",
 };

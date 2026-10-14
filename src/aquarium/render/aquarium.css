@@ -181,6 +181,10 @@
   background: none;
   box-shadow: none;
 }
+.aq-mode-decorate:not(.aq-placing) .aq-slot:not(.aq-slot-filled) {
+  visibility: hidden;
+  pointer-events: none;
+}
 .aq-slot-filled:hover,
 .aq-slot-filled:focus-visible {
   background: #d9ffec28;
@@ -292,6 +296,14 @@
   transform-origin: 30% 50%;
   animation: aq-tail-wag 0.78s ease-in-out infinite alternate;
 }
+.aq-fish-bobo .aq-fish-body {
+  /* Bobo is a square illustration, letterboxed inside the wide fish button. */
+  clip-path: inset(0 0 0 44%);
+}
+.aq-fish-bobo .aq-fish-tail {
+  clip-path: inset(0 52% 0 0);
+  transform-origin: 47% 50%;
+}
 .aq-fish-fin {
   position: absolute;
   left: 46%;
@@ -347,7 +359,13 @@
   opacity: 0;
 }
 .aq-fish {
-  transition: transform 0.34s ease-in-out;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+.aq-fish-figure {
+  scale: var(--facing, 1) 1;
+  transition: scale 0.34s ease-in-out;
 }
 .aq-fish-greeting .aq-fish-figure {
   animation: aq-fish-greet 0.62s ease-in-out 3;
@@ -561,6 +579,489 @@
 .aq-static .aq-fish-fin,
 .aq-static .aq-celebration span {
   animation: none !important;
+}
+
+/* Restoration is part of the world, not another menu or progress bar. */
+.aq-reef-layer,
+.aq-lighting,
+.aq-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.aq-reef-layer {
+  z-index: 2;
+}
+.aq-reef-art {
+  position: absolute;
+  height: auto;
+  transform: translate(-50%, -50%);
+  transform-origin: center 90%;
+  filter: drop-shadow(0 7px 8px #073c5266);
+  opacity: 0.92;
+  transition:
+    filter 1.4s,
+    opacity 1.4s;
+  animation: aq-reef-awaken 1.5s var(--reef-delay) both;
+}
+.aq-scene[data-reef="0"] .aq-reef-art {
+  filter: grayscale(0.9) brightness(0.66) saturate(0.4);
+  opacity: 0.43;
+  animation: none;
+}
+.aq-reef-glow {
+  position: absolute;
+  inset: 35% 0 2%;
+  opacity: 0;
+  transition: opacity 1.4s;
+  background:
+    radial-gradient(ellipse at 15% 50%, #c2f1a650, transparent 31%),
+    radial-gradient(ellipse at 90% 45%, #f5b6ea55, transparent 29%),
+    radial-gradient(ellipse at 50% 95%, #99f8ee36, transparent 65%);
+  mix-blend-mode: screen;
+}
+.aq-scene[data-reef="2"] .aq-reef-glow,
+.aq-scene[data-reef="3"] .aq-reef-glow {
+  opacity: 1;
+}
+.aq-scene[data-reef="2"] .aq-caustics,
+.aq-scene[data-reef="3"] .aq-caustics {
+  opacity: 0.3;
+}
+.aq-mode-backdrop .aq-reef-art {
+  opacity: 0.35;
+}
+.aq-minnow-school {
+  position: absolute;
+  left: 23%;
+  top: 36%;
+  width: 49%;
+  height: 19%;
+  opacity: 0;
+  animation: aq-school-swim 15s ease-in-out infinite alternate;
+}
+.aq-scene[data-reef="3"] .aq-minnow-school {
+  opacity: 0.85;
+}
+.aq-minnow-school i {
+  position: absolute;
+  left: calc(var(--i) * 12%);
+  top: 21%;
+  width: clamp(11px, 3.8vw, 20px);
+  height: clamp(6px, 2.1vw, 11px);
+  border-radius: 60% 60% 50% 50%;
+  background: linear-gradient(#f7e7b3, #62c7dd 55%, #286ea2);
+  box-shadow: 0 0 6px #c8f1ff77;
+  animation: aq-minnow-wiggle 1.5s var(--delay) ease-in-out infinite alternate;
+}
+.aq-minnow-school i:nth-child(3n) {
+  top: 42%;
+}
+.aq-minnow-school i:nth-child(3n + 1) {
+  top: 12%;
+}
+.aq-minnow-school i:nth-child(3n + 2) {
+  top: 64%;
+}
+.aq-minnow-school i::before {
+  content: "";
+  position: absolute;
+  left: -26%;
+  top: 12%;
+  width: 40%;
+  height: 80%;
+  background: #9fe4ea;
+  clip-path: polygon(0 0, 100% 50%, 0 100%, 17% 50%);
+}
+.aq-minnow-school i::after {
+  content: "";
+  position: absolute;
+  right: 17%;
+  top: 25%;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #123c65;
+}
+.aq-mode-backdrop .aq-minnow-school {
+  top: 15%;
+  height: 9%;
+  opacity: 0.5;
+}
+.aq-mode-backdrop:not([data-reef="3"]) .aq-minnow-school {
+  opacity: 0;
+}
+.aq-lighting {
+  z-index: 6;
+  transition:
+    background 1.2s,
+    opacity 1.2s;
+}
+.aq-scene[data-lighting="dawn"] .aq-lighting {
+  background: linear-gradient(160deg, #ffc98248, #ffc2b11c 45%, #37568a18);
+  mix-blend-mode: soft-light;
+}
+.aq-scene[data-lighting="dawn"] .aq-rays {
+  background-color: #ffcc8820;
+}
+.aq-scene[data-lighting="moon"] .aq-lighting {
+  background: linear-gradient(175deg, #222d7a47, #131e6038 72%, #10294d35);
+  mix-blend-mode: multiply;
+}
+.aq-scene[data-lighting="moon"] .aq-caustics {
+  opacity: 0.24;
+}
+.aq-scene[data-lighting="moon"] .aq-rays {
+  opacity: 0.32;
+}
+.aq-slot {
+  touch-action: none;
+  user-select: none;
+}
+.aq-slot-selected {
+  box-shadow:
+    0 0 0 3px #fff0c497,
+    0 0 22px #fff0bf82;
+}
+.aq-slot-dragging {
+  z-index: 15;
+  background: #8be8db15;
+  border: 2px solid #fff3c4bb;
+  box-shadow:
+    0 0 0 5px #fff3c42b,
+    0 12px 15px #083c5c50;
+}
+.aq-slot-dragging .aq-decor-art {
+  translate: 0 -8px;
+  filter: drop-shadow(0 15px 8px #073c6260) brightness(1.09);
+}
+.aq-slot-dragging::before {
+  opacity: 0.5;
+}
+.aq-slot-placed .aq-decor-art {
+  animation: aq-decor-land 0.38s ease-out;
+}
+.aq-guides {
+  z-index: 7;
+  opacity: 0;
+}
+.aq-guides-visible {
+  opacity: 1;
+}
+.aq-guide-x,
+.aq-guide-y {
+  position: absolute;
+  opacity: 0;
+  box-shadow: 0 0 6px #bfffee;
+}
+.aq-guide-x {
+  left: var(--guide-x);
+  top: 32%;
+  bottom: 13%;
+  width: 1px;
+  background: linear-gradient(transparent, #d1ffe9, transparent);
+}
+.aq-guide-y {
+  top: var(--guide-y);
+  left: 5%;
+  right: 5%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #d1ffe9, transparent);
+}
+.aq-snap-x .aq-guide-x,
+.aq-snap-y .aq-guide-y {
+  opacity: 1;
+}
+.aq-drag-origin {
+  position: absolute;
+  left: var(--origin-x);
+  top: var(--origin-y);
+  width: 65px;
+  height: 28px;
+  border: 1px dashed #dcffec9a;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #b8f9db17;
+}
+.aq-guides > span {
+  position: absolute;
+  left: 50%;
+  top: 29%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  border: 1px solid #f0e2ad66;
+  border-radius: 20px;
+  padding: 8px 15px;
+  background: #123c51d9;
+  color: #ffedc7;
+  font-size: 12px;
+}
+.aq-upgrade-wings {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+.aq-upgrade-wings img {
+  position: absolute;
+  width: 64%;
+  height: 64%;
+  object-fit: contain;
+  bottom: 14%;
+}
+.aq-upgrade-left {
+  left: -40%;
+}
+.aq-upgrade-right {
+  right: -40%;
+  transform: scaleX(-1);
+}
+.aq-upgrade-ring img {
+  width: 73%;
+  height: 73%;
+  bottom: 14%;
+}
+.aq-upgrade-ring .aq-upgrade-left {
+  left: -47%;
+}
+.aq-upgrade-ring .aq-upgrade-right {
+  right: -47%;
+}
+.aq-upgrade-wings i {
+  position: absolute;
+  left: -7%;
+  top: 26%;
+  width: 6%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #ffedb5;
+  box-shadow: 0 0 8px 4px #ffe8a061;
+  animation: aq-pearl-glow 2s ease-in-out infinite alternate;
+}
+.aq-upgrade-wings i + i {
+  left: auto;
+  right: -5%;
+  top: 63%;
+  animation-delay: -1s;
+}
+.aq-upgrade-badge {
+  position: absolute;
+  z-index: 3;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #fff2b1;
+  text-shadow: 0 1px 5px #073f57;
+  pointer-events: none;
+}
+.aq-story-heart {
+  position: absolute;
+  left: 48%;
+  top: -12%;
+  color: #ffe4d3;
+  text-shadow: 0 0 12px #ff9cbd;
+  font-size: 28px;
+  white-space: nowrap;
+  animation: aq-story-heart 4.3s both;
+  pointer-events: none;
+}
+.aq-fish-story .aq-fish-fin {
+  animation-duration: 0.4s;
+}
+.aq-fish-story .aq-fish-figure {
+  filter: drop-shadow(0 0 8px #ffe9bb88);
+}
+.aq-pearl-fruit,
+.aq-moon-portal {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.aq-pearl-fruit i {
+  position: absolute;
+  width: 14%;
+  aspect-ratio: 1;
+  left: 33%;
+  top: 20%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 25%,
+    white,
+    #f7e0f0 34%,
+    #9cbeed 68%,
+    #5c7ba9
+  );
+  box-shadow:
+    0 0 9px #f2e4ffc4,
+    inset 0 -2px 2px #7a9fe599;
+  animation: aq-pearl-glow 2.4s ease-in-out infinite alternate;
+}
+.aq-pearl-fruit i:nth-child(2) {
+  left: 62%;
+  top: 31%;
+  animation-delay: -0.6s;
+}
+.aq-pearl-fruit i:nth-child(3) {
+  left: 24%;
+  top: 46%;
+  animation-delay: -1.2s;
+}
+.aq-pearl-fruit i:nth-child(4) {
+  left: 53%;
+  top: 60%;
+  animation-delay: -1.8s;
+}
+.aq-pearl-fruit i:nth-child(5) {
+  left: 42%;
+  top: 36%;
+  animation-delay: -0.9s;
+}
+.aq-rare-pearl .aq-decor-sprite {
+  filter: drop-shadow(0 0 5px #f8ddff66);
+}
+.aq-pearl-fruit {
+  display: none;
+}
+.aq-moon-portal {
+  inset: 15% 25% 22%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    #a5e4ff21,
+    #a0a7ff0d 45%,
+    #c8d4ff45 60%,
+    transparent 68%
+  );
+  box-shadow: inset 0 0 14px #d1ceff42;
+  animation: aq-pearl-glow 3s ease-in-out infinite alternate;
+}
+.aq-moon-portal i {
+  position: absolute;
+  top: -29%;
+  left: 25%;
+  font-size: 30px;
+  font-style: normal;
+  color: #fff4c3;
+  text-shadow: 0 0 12px #ceeaff;
+}
+.aq-moon-portal b {
+  position: absolute;
+  top: 30%;
+  left: 8%;
+  font-size: 9px;
+  color: #e6e6ff;
+}
+.aq-moon-portal b:nth-child(3) {
+  top: 55%;
+  left: 75%;
+}
+.aq-moon-portal b:nth-child(4) {
+  top: 78%;
+  left: 34%;
+}
+.aq-rare-moon .aq-decor-sprite {
+  filter: drop-shadow(0 0 6px #bce3ff55);
+}
+.aq-moon-portal {
+  display: none;
+}
+@keyframes aq-reef-awaken {
+  from {
+    opacity: 0.4;
+    transform: translate(-50%, -40%) scale(0.75);
+  }
+  to {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes aq-school-swim {
+  from {
+    transform: translateX(-12%) translateY(-8%);
+  }
+  to {
+    transform: translateX(22%) translateY(14%);
+  }
+}
+@keyframes aq-minnow-wiggle {
+  from {
+    transform: translateY(-2px) rotate(-3deg);
+  }
+  to {
+    transform: translateY(2px) rotate(3deg);
+  }
+}
+@keyframes aq-pearl-glow {
+  from {
+    opacity: 0.72;
+    filter: brightness(0.95);
+  }
+  to {
+    opacity: 1;
+    filter: brightness(1.2);
+  }
+}
+@keyframes aq-story-heart {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 5px) scale(0.6);
+  }
+  20%,
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -8px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -25px) scale(1.15);
+  }
+}
+@keyframes aq-decor-land {
+  0% {
+    translate: 0 -8px;
+  }
+  50% {
+    translate: 0 3px;
+  }
+  75% {
+    translate: 0 -2px;
+  }
+  100% {
+    translate: 0 0;
+  }
+}
+.aq-static .aq-reef-art,
+.aq-static .aq-minnow-school,
+.aq-static .aq-minnow-school i,
+.aq-static .aq-story-heart,
+.aq-static .aq-upgrade-wings i,
+.aq-static .aq-pearl-fruit i,
+.aq-static .aq-moon-portal {
+  animation: none !important;
+}
+.aq-static .aq-fish-figure {
+  transition: none;
+}
+.aq-static .aq-slot-placed .aq-decor-art {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aq-reef-art,
+  .aq-minnow-school,
+  .aq-minnow-school i,
+  .aq-story-heart,
+  .aq-upgrade-wings i,
+  .aq-pearl-fruit i,
+  .aq-moon-portal {
+    animation: none !important;
+  }
+  .aq-fish-figure {
+    transition: none;
+  }
+  .aq-slot-placed .aq-decor-art {
+    animation: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .aq-rays,

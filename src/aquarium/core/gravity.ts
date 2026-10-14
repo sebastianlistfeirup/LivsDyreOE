@@ -1,5 +1,6 @@
 import { randomInt } from "./rng";
 import type { BoardState, TileType } from "./types";
+import { isOccupied } from "./terrain";
 
 function makesTriple(board: BoardState, cell: number): boolean {
   const type = board.tiles[cell]?.type;
@@ -33,33 +34,42 @@ function makesTriple(board: BoardState, cell: number): boolean {
   return false;
 }
 
-/** Each coral cell is an impermeable boundary until that coral is destroyed. */
+/** All fixed terrain divides gravity into independent segments, in any current direction. */
 export function applyGravity(board: BoardState): void {
-  for (let col = 0; col < 8; col++) {
-    let bottom = 7;
-    while (bottom >= 0) {
-      if (board.blockers[bottom * 8 + col]) {
-        bottom--;
+  const direction = board.gravity ?? "down";
+  for (let line = 0; line < 8; line++) {
+    // Cells are ordered from the destination edge back toward the source.
+    const cells = Array.from({ length: 8 }, (_, offset) =>
+      direction === "down"
+        ? (7 - offset) * 8 + line
+        : direction === "up"
+          ? offset * 8 + line
+          : direction === "left"
+            ? line * 8 + offset
+            : line * 8 + 7 - offset,
+    );
+    let start = 0;
+    while (start < 8) {
+      if (isOccupied(board, cells[start])) {
+        start++;
         continue;
       }
-      let top = bottom;
-      while (top > 0 && !board.blockers[(top - 1) * 8 + col]) top--;
-      const surviving = [];
-      for (let row = bottom; row >= top; row--) {
-        const tile = board.tiles[row * 8 + col];
-        if (tile) surviving.push(tile);
-      }
-      for (let row = bottom; row >= top; row--) {
-        const tile = surviving[bottom - row];
-        board.tiles[row * 8 + col] = tile ?? null;
-      }
-      bottom = top - 1;
+      let end = start + 1;
+      while (end < 8 && !isOccupied(board, cells[end])) end++;
+      const segment = cells.slice(start, end);
+      const surviving = segment.flatMap((cell) =>
+        board.tiles[cell] ? [board.tiles[cell]!] : [],
+      );
+      segment.forEach((cell, index) => {
+        board.tiles[cell] = surviving[index] ?? null;
+      });
+      start = end;
     }
   }
   // Keep genuine matches formed by falling survivors, but do not manufacture
   // runaway cascades simply because a random refill happens to make a triple.
   for (let cell = 0; cell < 64; cell++) {
-    if (board.blockers[cell] || board.tiles[cell]) continue;
+    if (isOccupied(board, cell) || board.tiles[cell]) continue;
     const [start, next] = randomInt(board.rngState, 5);
     board.rngState = next;
     let type = start as TileType;

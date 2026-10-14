@@ -1,4 +1,4 @@
-"""Touch/browser QA for Livs akvarie against a local Vite server.
+"""Touch/browser QA for Livs magiske akvarie against a local Vite server.
 
 Run: python tests/aquarium_mobile.py
 Set LIVS_TEST_URL to override http://127.0.0.1:4173/LivsDyreOE/.
@@ -8,6 +8,7 @@ the development-only engine import. Every action still uses browser controls.
 
 import json
 import os
+from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
@@ -19,20 +20,25 @@ PRODUCTION = os.environ.get("LIVS_TEST_PRODUCTION") == "1"
 # Captured from the deterministic, shipped level seeds using the same hint
 # policy as the development browser run. A production build exposes no TS
 # source or debug hooks; this fixture exercises its public touch UI only.
-WINNING_SWAPS = (
-    ((42, 43), (58, 59), (52, 60), (0, 8)),
-    ((35, 36), (35, 43), (36, 44), (38, 39), (35, 43), (32, 40)),
-    ((43, 51), (11, 19), (27, 35), (34, 42), (27, 28), (7, 15)),
-    ((52, 60), (38, 39), (55, 63), (53, 54), (50, 51)),
-    ((42, 43), (45, 46), (22, 30)),
-    ((57, 58), (56, 57), (10, 18), (45, 46), (53, 54), (2, 3), (8, 16), (62, 63)),
-    ((3, 4), (1, 9), (18, 19), (34, 35), (41, 49), (51, 59)),
-    ((35, 43), (51, 59), (61, 62)),
-    ((13, 21), (20, 28), (52, 60), (11, 19), (19, 27), (42, 50), (36, 44),
-     (3, 4), (3, 11), (5, 6), (21, 29), (3, 11), (1, 9), (17, 25), (17, 25)),
-    ((40, 41), (54, 55), (16, 24), (28, 29), (33, 41), (42, 43), (37, 45),
-     (53, 54), (53, 61), (58, 59)),
-)
+WINNING_PATHS = json.loads((Path(__file__).parent / "aquarium" / "paths.json").read_text(encoding="utf-8"))
+assert [path["level"] for path in WINNING_PATHS] == list(range(1, 31))
+GATES = {6: 60, 14: 80, 22: 80}
+TOTAL_SHELLS = 40 + 30 * 40 - sum(GATES.values())
+
+
+def dismiss_tutorial(page):
+    tutorial = page.locator('[data-action="tutorial-done"]')
+    if tutorial.count() and tutorial.is_visible():
+        level = int(tutorial.get_attribute('data-id'))
+        tutorial.tap()
+        assert level in saved(page)["adventure"]["seenTutorials"]
+
+
+def close_modal(page):
+    page.locator('#modal [data-action="close-modal"]').first.tap()
+    # A touch compatibility click must not hit a newly exposed button after
+    # closing the dialog (for example, Projects underneath Settings' close).
+    page.wait_for_function("() => !document.querySelector('#modal').open", timeout=3000)
 
 
 def saved(page):
@@ -49,7 +55,8 @@ def wait_settled(page, old_turn):
           const save = JSON.parse(raw);
           return save.active.board.turnId === oldTurn + 1 &&
             save.active.pending === null &&
-            document.querySelector('#board')?.getAttribute('aria-busy') === 'false';
+            document.querySelector('#board') &&
+            document.querySelector('#board').getAttribute('aria-busy') !== 'true';
         }""",
         arg={"key": SAVE_KEY, "oldTurn": old_turn}, timeout=30000,
     )
@@ -62,10 +69,9 @@ def wait_settled(page, old_turn):
 
 def engine_hint(page, board):
     if PRODUCTION:
-        swaps = WINNING_SWAPS[board["levelId"] - 1]
-        assert board["turnId"] < len(swaps), (board["levelId"], board["turnId"])
-        from_cell, to_cell = swaps[board["turnId"]]
-        return {"kind": "swap", "from": from_cell, "to": to_cell}
+        actions = WINNING_PATHS[board["levelId"] - 1]["actions"]
+        assert board["turnId"] < len(actions), (board["levelId"], board["turnId"])
+        return actions[board["turnId"]]
     return page.evaluate(
         """async ({board,url}) => {
           const engine = await import(url);
@@ -77,16 +83,19 @@ def engine_hint(page, board):
 
 def tap_action(page, action):
     before = saved(page)["active"]["board"]["turnId"]
-    if action["kind"] == "swap":
-        page.locator(f'.gem[data-cell="{action["from"]}"]').tap()
-        page.locator(f'.gem[data-cell="{action["to"]}"]').tap()
-    else:
-        page.locator(f'.gem[data-cell="{action["cell"]}"]').tap()
-        page.locator('[data-action="use-special"]').tap()
     try:
+        if action["kind"] == "swap":
+            page.locator(f'.gem[data-cell="{action["from"]}"]').tap()
+            page.locator(f'.gem[data-cell="{action["to"]}"]').tap()
+        else:
+            page.locator(f'.gem[data-cell="{action["cell"]}"]').tap()
+            page.locator('[data-action="use-special"]').tap()
         wait_settled(page, before)
     except PlaywrightTimeoutError as error:
-        raise AssertionError(f"Turn did not settle: action={action}, before={before}, after={saved(page)['active']}, board_busy={page.locator('#board').get_attribute('aria-busy')}") from error
+        page.screenshot(path='/tmp/livs-akvarie-turn-failure.png', full_page=True)
+        active = saved(page)['active']
+        detail = {"level": active['board']['levelId'], "turn": active['board']['turnId'], "pending": active['pending'], "rewarded": active['rewarded'], "busy": page.locator('#board').get_attribute('aria-busy')}
+        raise AssertionError(f"Touch turn did not settle: action={action}, before={before}, after={detail}; screenshot /tmp/livs-akvarie-turn-failure.png") from error
 
 
 def mobile_page(browser, width=390, height=844):
@@ -98,35 +107,50 @@ def mobile_page(browser, width=390, height=844):
     page = context.new_page()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    if PRODUCTION:
+        page.on('response', lambda response: errors.append(f'HTTP {response.status}: {response.url}') if response.status >= 400 and response.url.startswith(URL.split('/LivsDyreOE/')[0]) else None)
     page.goto(URL, wait_until="networkidle")
     page.locator('#board .gem').first.wait_for()
-    page.wait_for_function("() => document.querySelectorAll('#board .gem').length >= 56")
+    page.wait_for_function("() => document.querySelectorAll('#board .gem').length >= 36")
+    assert 'Livs magiske akvarie' in page.title()
     return context, page, errors
 
 
 def set_reduced_motion(page):
     page.locator('[data-action="settings"]').tap()
     page.locator('[data-setting="reducedMotion"]').check()
-    page.locator('[data-action="close-modal"]').tap()
+    close_modal(page)
     assert saved(page)["settings"]["reducedMotion"] is True
 
 
-def play_all_ten(browser):
+def play_all_thirty(browser):
     context, page, errors = mobile_page(browser)
+    if PRODUCTION:
+        print('Production bundle: ' + page.locator('script[type="module"][src]').first.get_attribute('src'), flush=True)
     assert saved(page)["shells"] == 40
     page.screenshot(path="/tmp/livs-akvarie-first-phone.png", full_page=True)
     set_reduced_motion(page)
     winning_checkpoint = None
     winning_action = None
+    terrain_replay = None
     move_counts = []
-    for level in range(1, 11):
+    art_signatures = []
+    shapes = []
+    project_spending = 0
+    for level in range(1, 31):
         print(f'Touch-playing level {level}', flush=True)
         assert saved(page)["active"]["board"]["levelId"] == level
-        theme = ('Solbugten', 'Koralhaven', 'Perlelagunen', 'Krystalrevet', 'Stjernedybet')[(level - 1) // 2]
-        assert theme in page.locator('#level-badge').inner_text()
-        assert page.locator('body').get_attribute('data-gem-theme') == str((level - 1) // 2)
+        dismiss_tutorial(page)
+        assert f'Bane {level} af 30' in page.locator('#level-badge').inner_text()
+        assert page.locator('body').get_attribute('data-gem-theme') == str(level - 1)
+        assert page.locator('body').get_attribute('data-region') == ('sun' if level <= 6 else 'coral' if level <= 14 else 'pearl' if level <= 22 else 'star')
         # The objective preview must match the actual jewel, including its new theme.
         opening_board = saved(page)["active"]["board"]
+        page.wait_for_function("()=>[...document.querySelectorAll('#board .gem img')].every(image=>image.complete&&image.naturalWidth>0)")
+        shapes.append(tuple(opening_board['voids']))
+        assert page.locator('#board .gem').count() == sum(tile is not None for tile in opening_board['tiles'])
+        assert page.locator('#board .void-cell').count() == sum(opening_board['voids'])
+        art_signatures.append(tuple(page.locator(f'.gem[data-cell="{next(i for i,t in enumerate(opening_board["tiles"]) if t and t["type"]==kind and not t.get("special"))}"] img').get_attribute('src') for kind in range(5)))
         for objective in opening_board['objectives']:
             kinds = ('shell', 'star', 'drop', 'leaf', 'pearl')
             if objective['kind'] not in kinds:
@@ -146,13 +170,16 @@ def play_all_ten(browser):
             before = current
             tap_action(page, action)
             moves += 1
+            if level == 26 and moves == 1:
+                terrain_replay = (before, action, saved(page))
             if level == 1 and saved(page)["active"]["rewarded"]:
                 winning_checkpoint = before
                 winning_action = action
-            assert moves <= 28, (level, moves)
+            assert moves <= opening_board['movesRemaining'], (level, moves)
         move_counts.append(moves)
         current = saved(page)
-        assert current["shells"] == 40 + level * 40, (level, current["shells"])
+        assert current["shells"] == 40 + level * 40 - project_spending, (level, current["shells"])
+        assert current['adventure']['reefSavings'] == min(220, level * 10) - project_spending
         assert current["claimed"] == list(range(1, level + 1))
         assert current["completed"] == current["claimed"]
         assert page.locator('#modal').is_visible()
@@ -160,27 +187,51 @@ def play_all_ten(browser):
             page.reload(wait_until="networkidle")
             assert saved(page)["shells"] == 80
             assert saved(page)["claimed"] == [1]
-        if level < 10:
-            if page.locator('[data-action="next-level"]').count():
+        if level in GATES:
+            # The next region really is locked until the visible reef project is built.
+            close_modal(page)
+            page.locator('[data-action="levels"]').tap()
+            assert page.locator(f'[data-action="choose-level"][data-id="{level+1}"]').is_disabled()
+            page.locator('#modal [data-action="projects"]').first.tap()
+            restore = page.locator('#modal [data-action="restore-reef"]').first
+            assert restore.is_enabled()
+            reserve_before = saved(page)['adventure']['reefSavings']
+            restore.tap()
+            project_spending += GATES[level]
+            current = saved(page)
+            assert current['shells'] == 40 + level * 40 - project_spending
+            assert current['adventure']['reefSavings'] == reserve_before - GATES[level]
+            assert current['adventure']['reefStage'] == list(GATES).index(level) + 1
+            page.locator('[data-action="aquarium"]').tap()  # Back from restored aquarium to the board.
+            page.locator('[data-action="levels"]').tap()
+            page.locator(f'[data-action="choose-level"][data-id="{level+1}"]').tap()
+        elif level < 30:
+            if page.locator('#modal [data-action="next-level"]').count():
                 page.locator('[data-action="next-level"]').tap()
             else:
                 page.locator('[data-action="levels"]').tap()
                 page.locator(f'[data-action="choose-level"][data-id="{level + 1}"]').tap()
+        if level < 30:
             page.wait_for_function(
                 "({key,id}) => JSON.parse(localStorage.getItem(key)).active.board.levelId === id",
                 arg={"key": SAVE_KEY, "id": level + 1},
             )
-    assert saved(page)["shells"] == 440
-    assert saved(page)["completed"] == list(range(1, 11))
+    assert saved(page)["shells"] == TOTAL_SHELLS
+    assert saved(page)["completed"] == list(range(1, 31))
+    assert saved(page)['adventure']['reefStage'] == 3
+    assert saved(page)['adventure']['reefSavings'] == 0
+    assert len(set(shapes)) == 30, 'Every level needs its own board silhouette'
+    assert len(set(art_signatures)) == 30, 'Every level needs a distinct jewel appearance'
     fresh_tab = context.new_page()
     fresh_tab.goto(URL, wait_until="networkidle")
-    assert saved(fresh_tab)["shells"] == 440
-    assert saved(fresh_tab)["completed"] == list(range(1, 11))
+    assert saved(fresh_tab)["shells"] == TOTAL_SHELLS
+    assert saved(fresh_tab)["completed"] == list(range(1, 31))
     fresh_tab.close()
-    page.screenshot(path="/tmp/livs-akvarie-ten-wins.png", full_page=True)
+    page.screenshot(path="/tmp/livs-magiske-akvarie-thirty-wins.png", full_page=True)
     assert not errors, errors
     assert winning_checkpoint and winning_action
-    return context, page, winning_checkpoint, winning_action, move_counts
+    assert terrain_replay
+    return context, page, winning_checkpoint, winning_action, move_counts, terrain_replay
 
 
 def open_checkpoint(browser, checkpoint):
@@ -226,6 +277,7 @@ def interrupted_winning_turn(browser, checkpoint, action):
     assert recovered["active"]["pending"] is None
     assert recovered["shells"] == expected["shells"] == 80
     assert recovered["claimed"] == expected["claimed"] == [1]
+    assert recovered['adventure'] == expected['adventure']
     interrupted.reload(wait_until="networkidle")
     assert saved(interrupted)["shells"] == 80
     assert saved(interrupted)["claimed"] == [1]
@@ -234,16 +286,102 @@ def interrupted_winning_turn(browser, checkpoint, action):
     interrupted_context.close()
 
 
+def pending_legacy_and_terrain(browser, checkpoint, action, terrain_replay):
+    # A genuinely old level-one board has all 64 cells, no new terrain fields,
+    # no adventure state, and the same still-uncommitted action intent.
+    context, page, errors = mobile_page(browser)
+    legacy = json.loads(json.dumps(checkpoint))
+    legacy.pop('adventure', None)
+    for field in ('voids', 'rocks', 'clams', 'bubbles', 'gravity'):
+        legacy['active']['board'].pop(field, None)
+    legacy['active']['pending'] = action
+    page.evaluate('({key,save})=>localStorage.setItem(key,JSON.stringify(save))', {'key': SAVE_KEY, 'save': legacy})
+    page.reload(wait_until='networkidle')
+    page.wait_for_function('key=>JSON.parse(localStorage.getItem(key)).active.rewarded', arg=SAVE_KEY)
+    restored = saved(page)
+    assert restored['active']['legacy'] is True
+    assert restored['active']['board']['turnId'] == checkpoint['active']['board']['turnId'] + 1
+    assert restored['active']['board']['movesRemaining'] == checkpoint['active']['board']['movesRemaining'] - 1
+    assert restored['active']['pending'] is None
+    assert restored['shells'] == 80 and restored['claimed'] == [1]
+    assert restored['adventure']['reefSavings'] == 10
+    page.reload(wait_until='networkidle')
+    assert saved(page)['shells'] == 80
+    assert saved(page)['active']['board'] == restored['active']['board']
+    assert not errors, errors
+    context.close()
+
+    before, pending_action, expected = terrain_replay
+    context, page, errors = mobile_page(browser)
+    pending = json.loads(json.dumps(before))
+    pending['active']['pending'] = pending_action
+    page.evaluate('({key,save})=>localStorage.setItem(key,JSON.stringify(save))', {'key': SAVE_KEY, 'save': pending})
+    page.reload(wait_until='networkidle')
+    recovered = saved(page)
+    assert recovered['active']['board'] == expected['active']['board']
+    assert recovered['active']['pending'] is None
+    assert recovered['shells'] == before['shells']
+    assert recovered['adventure'] == before['adventure']
+    page.reload(wait_until='networkidle')
+    assert saved(page)['active']['board'] == recovered['active']['board']
+    assert not errors, errors
+    context.close()
+    print('Legacy pending win and new-terrain/current pending turn both recover exactly once', flush=True)
+
+
+def protected_reserve(browser, checkpoint, action):
+    context, page, errors = open_checkpoint(browser, checkpoint)
+    tap_action(page, action)
+    assert saved(page)['shells'] == 80 and saved(page)['adventure']['reefSavings'] == 10
+    page.locator('[data-action="win-decorate"]').tap()
+    page.locator('[data-action="levels"]').tap()
+    page.locator('[data-action="fish-card"][data-id="sky"]').tap()
+    page.locator('[data-action="buy-fish"][data-id="sky"]').tap()
+    assert saved(page)['shells'] == 40 and saved(page)['adventure']['reefSavings'] == 10
+    page.locator('[data-action="hint"]').tap()
+    page.locator('[data-action="select-decor"][data-id="lantern"]').tap()
+    before = saved(page)
+    page.locator('.aq-slot[data-slot="0"]').tap()
+    assert saved(page) == before, 'A 35-shell item must not spend the 10 reserved shells out of a 40-shell wallet'
+    assert 'mangler' in page.locator('#toast').inner_text().lower()
+    assert saved(page)['adventure']['reefSavings'] == 10
+    assert not errors, errors
+    context.close()
+    print('Protected reef savings cannot be spent in the decoration shop', flush=True)
+
+
+def corrupt_save_recovery(browser, checkpoint):
+    context, page, errors = mobile_page(browser)
+    broken = '{"project":"livs-akvarie","unfinished":'
+    page.evaluate('''({key,backup,broken})=>{localStorage.setItem(key+'.backup',JSON.stringify(backup));localStorage.setItem(key,broken)}''', {'key': SAVE_KEY, 'backup': checkpoint, 'broken': broken})
+    page.reload(wait_until='networkidle')
+    assert page.evaluate('key=>localStorage.getItem(key)', SAVE_KEY) == broken
+    assert page.locator('[data-action="recover-backup"]').is_visible()
+    page.locator('[data-action="recover-backup"]').tap()
+    page.wait_for_function('key=>{try{return JSON.parse(localStorage.getItem(key)).project==="livs-akvarie"}catch{return false}}', arg=SAVE_KEY)
+    assert saved(page)['active']['board'] == checkpoint['active']['board']
+    assert saved(page)['shells'] == checkpoint['shells']
+    page.evaluate('''({key,broken})=>{localStorage.removeItem(key+'.backup');localStorage.setItem(key,broken)}''', {'key': SAVE_KEY, 'broken': broken})
+    page.reload(wait_until='networkidle')
+    assert page.evaluate('key=>localStorage.getItem(key)', SAVE_KEY) == broken
+    assert page.locator('[data-action="recover-backup"]').count() == 0
+    assert page.locator('[data-action="fresh-after-error"]').is_visible()
+    assert not errors, errors
+    context.close()
+    print('Corrupt main saves remain untouched until explicit backup recovery or fresh-start choice', flush=True)
+
+
 def shop_and_import(page):
     page.locator('[data-action="win-decorate"]').tap()
+    page.locator('[data-action="hint"]').tap()  # Open the decoration catalogue.
     page.locator('[data-action="select-decor"][data-id="seagrass"]').tap()
     page.locator('.aq-slot[data-slot="0"]').tap()
-    assert saved(page)["shells"] == 425
+    assert saved(page)["shells"] == TOTAL_SHELLS - 15
     assert saved(page)["placements"] == [{"id": "seagrass", "slot": 0, "rotation": 0}]
 
     page.locator('.aq-slot[data-slot="0"]').tap()
     page.locator('.aq-slot[data-slot="1"]').tap()
-    assert saved(page)["shells"] == 425
+    assert saved(page)["shells"] == TOTAL_SHELLS - 15
     assert saved(page)["placements"][0]["slot"] == 1
     page.locator('[data-action="undo-decor"]').tap()
     assert saved(page)["placements"][0]["slot"] == 0
@@ -253,13 +391,13 @@ def shop_and_import(page):
     assert saved(page)["placements"][0]["rotation"] == 1
     page.locator('[data-action="sell-decor"]').tap()
     page.locator('[data-action="confirm-sell"]').tap()
-    assert saved(page)["shells"] == 440
+    assert saved(page)["shells"] == TOTAL_SHELLS
     assert saved(page)["decorations"] == []
 
     page.locator('[data-action="levels"]').tap()  # Fish catalogue in aquarium mode.
     page.locator('[data-action="fish-card"][data-id="sky"]').tap()
     page.locator('[data-action="buy-fish"][data-id="sky"]').tap()
-    assert saved(page)["shells"] == 400
+    assert saved(page)["shells"] == TOTAL_SHELLS - 40
     assert 'sky' in saved(page)["fishIds"]
 
     page.locator('[data-action="settings"]').tap()
@@ -267,7 +405,7 @@ def shop_and_import(page):
         page.locator('[data-action="export"]').tap()
     download = transfer.value
     exported = json.loads(open(download.path(), encoding="utf-8").read())
-    assert exported["shells"] == 400
+    assert exported["shells"] == TOTAL_SHELLS - 40
     before_bad_import = saved(page)
     page.locator('#import-file').set_input_files({
         "name": "broken.json", "mimeType": "application/json", "buffer": b'{"project":"bad"}',
@@ -290,8 +428,58 @@ def shop_and_import(page):
         "key => !JSON.parse(localStorage.getItem(key)).fishStyles.sky",
         arg=SAVE_KEY,
     )
-    assert saved(page)["shells"] == 400
+    assert saved(page)["shells"] == TOTAL_SHELLS - 40
     assert 'sky' in saved(page)["fishIds"]
+
+
+def upgrades_stories_and_postcard(page):
+    """All purchases use earned shells from the actual thirty-level run."""
+    page.locator('[data-action="win-decorate"]').tap()
+    initial = saved(page)['shells']
+    page.locator('[data-action="hint"]').tap()
+    page.locator('[data-action="select-decor"][data-id="cave"]').tap()
+    page.locator('.aq-slot[data-slot="0"]').tap()
+    assert saved(page)['shells'] == initial - 20
+    for tier, price in ((1, 40), (2, 70)):
+        before = saved(page)['shells']
+        page.locator('.aq-slot[data-slot="0"]').tap()
+        page.locator('[data-action="upgrade-preview"][data-id="cave"]').tap()
+        page.locator('[data-action="upgrade-decor"][data-id="cave"]').tap()
+        assert saved(page)['adventure']['upgrades']['cave'] == tier
+        assert saved(page)['shells'] == before - price
+    assert page.locator('.aq-slot[data-slot="0"] .aq-upgrade-badge').count() == 1
+    for chapter in (1, 2):
+        page.locator('[data-action="levels"]').tap()
+        page.locator('[data-action="fish-card"][data-id="sky"]').tap()
+        page.locator('[data-action="fish-story"][data-id="sky"]').tap()
+        assert saved(page)['adventure']['stories']['sky'] == chapter
+    page.locator('.aq-slot[data-slot="0"]').tap()
+    page.locator('[data-action="sell-decor"]').tap()
+    assert '130' in page.locator('#modal').inner_text()
+    page.locator('[data-action="confirm-sell"]').tap()
+    assert saved(page)['shells'] == initial, 'Selling must refund the base decoration and both upgrades'
+    assert 'cave' not in saved(page)['adventure']['upgrades']
+    assert saved(page)['adventure']['stories']['sky'] == 2, 'Happy memories must survive a harmless decoration sale'
+
+    page.locator('[data-action="ambience"]').tap()
+    page.locator('[data-action="lighting"][data-id="moon"]').tap()
+    assert saved(page)['adventure']['lighting'] == 'moon'
+    page.locator('[data-action="view-region"][data-id="pearl"]').tap()
+    assert saved(page)['adventure']['region'] == 'pearl'
+    with page.expect_download(timeout=30000) as transfer:
+        page.locator('[data-action="postcard"]').tap()
+    postcard = transfer.value
+    assert postcard.suggested_filename.startswith('livs-magiske-akvarie-')
+    with open(postcard.path(), 'rb') as stream:
+        header = stream.read(24)
+    assert header[:8] == b'\x89PNG\r\n\x1a\n'
+    assert int.from_bytes(header[16:20], 'big') >= 390
+    assert int.from_bytes(header[20:24], 'big') >= 600
+    page.reload(wait_until='networkidle')
+    assert saved(page)['adventure']['lighting'] == 'moon'
+    assert saved(page)['adventure']['region'] == 'pearl'
+    assert saved(page)['adventure']['stories']['sky'] == 2
+    print('Two cave upgrades, both Sky stories, full 130-shell refund, lighting/region persistence and PNG postcard export passed', flush=True)
 
 
 def check_viewport(browser, width, height):
@@ -321,6 +509,10 @@ def check_production_offline(browser):
     page.evaluate("async () => { await navigator.serviceWorker.ready; return true; }")
     page.wait_for_function("() => navigator.serviceWorker.controller !== null", timeout=15000)
     assert page.evaluate("() => navigator.serviceWorker.controller.scriptURL.endsWith('/LivsDyreOE/sw.js')")
+    cached = page.evaluate("async()=>{const names=(await caches.keys()).filter(name=>name.startsWith('livs-akvarie-'));const cache=await caches.open(names.at(-1));return(await cache.keys()).map(request=>request.url)}")
+    assert sum('/jewels/level-' in url for url in cached) == 150, 'All five jewels for all thirty levels must be available offline'
+    for region in ('coral', 'pearl', 'star'):
+        assert any(url.endswith(f'/region-{region}.webp') for url in cached), region
     original = saved(page)
     context.set_offline(True)
     page.reload(wait_until="load")
@@ -329,6 +521,8 @@ def check_production_offline(browser):
     assert {key: value for key, value in restored.items() if key != "updatedAt"} == {
         key: value for key, value in original.items() if key != "updatedAt"
     }
+    assert page.evaluate("async()=>{const response=await fetch('./aquarium/art/jewels/level-30-4.webp');return response.ok&&(await response.arrayBuffer()).byteLength>100}")
+    assert page.evaluate("async()=>{const response=await fetch('./aquarium/art/region-star.webp');return response.ok&&(await response.arrayBuffer()).byteLength>100}")
     tap_action(page, engine_hint(page, original["active"]["board"]))
     assert saved(page)["active"]["board"]["turnId"] == 1
     assert not errors, errors
@@ -341,13 +535,20 @@ if __name__ == '__main__':
         small_controls = []
         for size in ((390, 844), (320, 640), (844, 390), (768, 1024), (1024, 768)):
             small_controls.extend(check_viewport(browser, *size))
-        context, page, checkpoint, action, move_counts = play_all_ten(browser)
+        context, page, checkpoint, action, move_counts, terrain_replay = play_all_thirty(browser)
+        post_win_errors = []
+        page.on('pageerror', lambda error: post_win_errors.append(str(error)))
         interrupted_winning_turn(browser, checkpoint, action)
+        pending_legacy_and_terrain(browser, checkpoint, action, terrain_replay)
+        protected_reserve(browser, checkpoint, action)
+        corrupt_save_recovery(browser, checkpoint)
         shop_and_import(page)
+        upgrades_stories_and_postcard(page)
+        assert not post_win_errors, post_win_errors
         context.close()
         if PRODUCTION:
             check_production_offline(browser)
         browser.close()
     assert not small_controls, f'Touch targets smaller than 48×48: {small_controls}'
-    print(f'Five viewports, ten touch-played wins ({move_counts} moves), pending replay, shop and import passed' +
+    print(f'Five viewports, thirty touch-played wins ({move_counts} moves), three region gates, protected savings, pending/legacy replay, corrupt backup recovery, shop and import passed' +
           (', offline reload and turn passed.' if PRODUCTION else '.'))

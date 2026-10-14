@@ -1,33 +1,35 @@
-# Livs akvarie
+# Livs magiske akvarie
 
-Et dansk match-3-mobilspil med funklende havjuveler, kædereaktioner og et akvarium, du selv indretter. Ti baner, fire fisk og otte dekorationer. Ingen reklamer, betaling, energi eller ventetid.
+Et dansk match-3-mobilspil til Liv: 30 baner med forskellige former og juvelsæt, fire fisk med små fortællinger og et akvarium, der udvikler sig gennem dine valg. Ingen reklamer, betaling, energi eller ventetid.
 
-Spiladressen er **https://sebastianlistfeirup.github.io/LivsDyreOE/**. Adressen beholder det oprindelige repository-navn; det aktive spil hedder **Livs akvarie**. GitHub Actions tester, bygger og udgiver main til GitHub Pages.
+Spil: **https://sebastianlistfeirup.github.io/LivsDyreOE/**. Repository-adressen er bevaret; spillet hedder **Livs magiske akvarie**. GitHub Actions tester, bygger og udgiver main.
 
 ## På telefonen
 
-- Træk en brik hen til en nabo. Du kan også trykke på to naboer. Tre ens forsvinder; et ugyldigt bytte koster intet.
-- Fire på række skaber en stråle. Fem skaber en farveperle. Et L eller T skaber en boblebombe. Byt specialbrikker med en nabo; stråler og bomber kan også vælges og aktiveres med **Brug**.
-- Tryk **♪** for lyd. Brikkerne følger fingeren, hopper blødt på plads og sender indsamlede juveler op til banens mål. Specialeffekter har lysstråler, boblebrag og kædereaktioner.
-- Juvelernes former og nuancer udvikler sig gennem fem temaer: Solbugten, Koralhaven, Perlelagunen, Krystalrevet og Stjernedybet. Hvert tema varer to baner; grundfarverne bevarer deres betydning.
-- Tryk **Akvarium → Indret** for at købe og placere noget på sandbunden. Tryk på en placeret dekoration for at flytte den gratis, dreje den eller sælge den til fuld pris.
-- Tryk på en fisk for at give den navn, farveskær og yndlingsting. Sky besøger hulen; Glimt svømmer gennem ringen. Fiskene behøver ikke fodring.
-- **Et lille hint** hjælper uden at spille for dig. Hvis trækkene slipper op, er fem ekstra træk og nye forsøg gratis.
+- Træk en brik til en nabo, eller tryk på to naboer. Brikken følger fingeren, naboen reagerer, og et ugyldigt bytte koster intet.
+- Fire ens giver en stråle, fem en farveperle, L/T en boblebombe. To stråler giver et kryds; bombe + stråle rammer tre rækker og tre kolonner; to farveperler rydder alle brikker.
+- Hver bane har sin egen form og sit eget juvelsæt. Senere møder du faste sten, muslinger med to træffere, bobler der løfter brikker og strømme, der vender faldet. Pilen viser næste strømretning.
+- Væk revet i tre etaper og åbn Koralhaven, Perlelagunen og Stjernedybet. Områderne har egne baggrunde og stille musik, når lyden er slået til.
+- Vælg et ønske på projektknappen. Sejren viser din opsparing og giver en direkte byggeknap, når du har råd.
+- **Akvarium → Indret** køber og placerer ting. Træk en placeret ting frit med fingeren; hjælpelinjer gør det nemt at rette ind. Flytning kan fortrydes, og dekorationer inklusive udvidelser kan sælges til fuld pris.
+- Udvid Skys hule og Glimts svømmebane i to trin. Tryk på fiskene for at opdage deres små historier eller ændre navn, farveskær og yndlingsting.
+- Vælg solstrejf, morgenglød eller måneskin, besøg et åbent område og gem et rigtigt PNG-postkort af dit akvarium.
+- **Et lille hint** hjælper uden at spille for dig. Fem ekstra træk og nye forsøg er altid gratis.
 
-På iPhone: Åbn i Safari, vælg **Del → Føj til hjemmeskærm**. På Android: Vælg **Installer app/Føj til startskærm** i browseren. Så åbner spillet uden almindelig browserramme. Første åbning kræver net; efter den færdige offline-download kan spillet genåbnes og spilles offline i understøttede browsere. Rydning af browserdata fjerner både offline-filer og lokal gemning.
+Start: 40 skaller. Første sejr: 40; gentagelse: 10. Af hver førstegangssejrs 40 skaller reserveres 10 til revet, indtil de tre etaper er betalt. Revprojekterne koster 60, 80 og 80 efter bane 6, 14 og 22. Alle 30 førstegangssejre rækker til hele revet, alle fisk, alle dekorationer og begge udvidelser af både hule og ring — uden tvungen gentagelse.
 
-Spillet gemmer automatisk på enheden. **Indstillinger → Gem en kopi / Åbn en kopi** flytter en gemning mellem enheder. Der er ingen konto eller automatisk synkronisering. Dansk oplæsning bruger den danske stemme, enheden eventuelt har installeret.
+På iPhone: Safari → **Del → Føj til hjemmeskærm**. På Android: **Installer app/Føj til startskærm**. Første åbning kræver net; efter færdig offline-download kan spillet genåbnes offline i understøttede browsere. Gemningen er lokal, uden konto eller automatisk synkronisering. **Indstillinger → Gem en kopi / Åbn en kopi** flytter spillet mellem enheder. Rydning af browserdata fjerner lokal gemning og offline-filer.
 
 ## Udvikling
 
-Node.js 20+; CI bruger Node.js 24. Brug det eksisterende checkout i /workspace/LivsDyreOE.
+Node.js 24 er testet. Brug det eksisterende checkout i /workspace/LivsDyreOE.
 
 ```sh
 npm ci
 npm run dev -- --host 0.0.0.0 --port 4173
 ```
 
-Vites base er /LivsDyreOE/. Start en ny serverproces efter genstart af udviklingsmiljøet; en gammel proces kan ikke antages at overleve.
+Vites base er /LivsDyreOE/. Serverprocesser skal genstartes efter gendannelse af cloudmiljøet.
 
 ```sh
 npm test
@@ -36,26 +38,24 @@ npm run build
 npm run preview -- --host 0.0.0.0 --port 4174
 ```
 
-Browserkontroller kræver Python Playwright og Chromium. I det forberedte cloudmiljø findes browseren på /usr/bin/chromium.
+Browserkontroller kræver Python Playwright og Chromium (/usr/bin/chromium i cloudmiljøet). De bruger isolerede testprofiler, ikke spillerens gemning.
 
 ```sh
-# Mod udviklingsserveren på port 4173:
 python tests/aquarium_mobile.py
 python tests/aquarium_gestures.py
-# Mod den færdigbyggede preview-server på port 4174, inklusive offline:
+python tests/aquarium_expansion_mobile.py
 LIVS_TEST_URL=http://127.0.0.1:4174/LivsDyreOE/ LIVS_TEST_PRODUCTION=1 python tests/aquarium_mobile.py
+AQ_BASE_URL=http://127.0.0.1:4174/LivsDyreOE/ python tests/aquarium_expansion_mobile.py
 ```
 
-Spillet bruger TypeScript, HTML/SVG, Canvas-partikler og CSS/Web Animations. Reglerne er uafhængige af billeder og animationstiming. src/aquarium/core indeholder den seedede motor, save indeholder validering og turn-recovery, render indeholder juveler og fisk. Billederne er originale genererede illustrationer: se [aktivoversigten](docs/aquarium-assets.md). Der er ingen tredjepartsanalyse eller netværkskonto.
+Den sidste integrationstest bruger devserveren som fabrik for deklarerede, validerede testgemninger; alle handlinger udføres gennem produktionsspillets UI. Den fulde 30-bane-test bruger faste vinderforløb uden udviklingsimport i produktionsmodus.
 
-## Kontrolleret kvalitet og afgrænsning
+TypeScript, originale billedaktiver, Canvas-partikler og CSS/Web Animations. Regler og gemning er uafhængige af animationstiming. Se [design](docs/LIVS_AKVARIE.md), [grafik](docs/aquarium-assets.md) og [verifikation/afgrænsninger](STATUS.md).
 
-75 automatiske regel-/gemme-/regressionstests, herunder 1.000 seedede træk, består. Alle ti baner er gennemført via browserens touch-kontroller. Fem mobil-/tabletstørrelser, ugyldige swipes, annullerede træk, alle specialeffekter, genindlæsning under en vindende kaskade, køb, refundering, import/eksport og offline genåbning er kontrolleret. Se [STATUS.md](STATUS.md) for den konkrete leverance og åbne telefonkontroller.
+## Bevaring
 
-Det er browseremulering, ikke en fysisk iPhone-/Android-test. Fiskene er illustrerede 2D-figurer med animerede haler, finner, svømmebaner og adfærd — ikke fuldt riggede 3D-dyr. Referencebillederne er ambitionsmål, ikke dokumentation for 1:1-kvalitet.
+Save-nøglen **livs-akvarie.save.v1** er uændret. Tidligere akvariegemninger bevarer bræt, fisk, skaller og igangværende træk. Gamle gennemførte baner får deres manglende revopsparing tilføjet én gang uden at reducere allerede frie skaller.
 
-## Livs Dyreø er sat på pause
+Livs Dyreø er på pause. Den tidligere ø findes ved f29f87a; animationsprototypen ved 1f14aab på archive/livs-dyreo-animation-wip. Akvariet ændrer ikke øens gemte data.
 
-Den tidligere udgivne ø er bevaret ved f29f87a. Den ikke-udgivne 3D-animationsprototype ligger på archive/livs-dyreo-animation-wip ved 1f14aab. Akvariet bruger sin egen save-nøgle, livs-akvarie.save.v1, og ændrer ikke øens gemte data.
-
-Designgrundlaget er brugerens *BOBLEBUGTEN_BIBEL_v1_2.pdf*, med brugerens navneændring til **Livs akvarie**. Projektbeslutninger og præcise regler findes i [designnotatet](docs/LIVS_AKVARIE.md).
+Designgrundlag: brugerens BOBLEBUGTEN_BIBEL_v1_2.pdf med de efterfølgende udvidelser til 30 baner og navnet **Livs magiske akvarie**. Referencerne er ambitionsmål, ikke en påstand om 1:1-kvalitet. Fiskene er animerede 2D-illustrationer, ikke skeletanimerede 3D-dyr.

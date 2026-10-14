@@ -22,7 +22,7 @@ function rating(board: BoardState): number {
 }
 
 function signature(board: BoardState): string {
-  return `${board.rngState}|${board.tiles.map((tile) => (tile ? `${tile.type}${tile.special?.[0] ?? ""}` : "x")).join(",")}|${board.blockers.map(Number).join("")}|${board.sand.map(Number).join("")}|${board.objectives.map((objective) => objective.collected).join(",")}`;
+  return `${board.rngState}|${board.tiles.map((tile) => (tile ? `${tile.type}${tile.special?.[0] ?? ""}` : "x")).join(",")}|${board.blockers.map(Number).join("")}|${board.sand.map(Number).join("")}|${board.clams?.join("")}|${board.gravity}|${board.objectives.map((objective) => objective.collected).join(",")}`;
 }
 
 function solve(seedBoard: BoardState, width = 24): Action[] | null {
@@ -73,9 +73,7 @@ describe("fixed-seed level solvability", () => {
       }
       expect(isWon(replay)).toBe(true);
     }, 120_000);
-  }
-  it("keeps hint-following playthroughs within every move budget", () => {
-    for (const level of LEVELS) {
+    it(`level ${level.id} is winnable by following hints within its move budget`, () => {
       let board = createBoard(level.id);
       let maxWaves = 0;
       let used = 0;
@@ -92,9 +90,9 @@ describe("fixed-seed level solvability", () => {
       }
       expect(
         isWon(board),
-        `Hints failed on level ${level.id} after ${used} moves`,
+        `Hints failed on level ${level.id} after ${used} moves: ${JSON.stringify(board.objectives)}`,
       ).toBe(true);
       expect(maxWaves).toBeLessThanOrEqual(8);
-    }
-  }, 120_000);
+    }, 120_000);
+  }
 });

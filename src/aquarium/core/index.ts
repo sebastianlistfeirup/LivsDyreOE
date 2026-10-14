@@ -8,7 +8,9 @@ export type {
   Tile,
   TileType,
   TurnResult,
+  Gravity,
 } from "./types";
+export { normalizeBoard, isOccupied } from "./terrain";
 export { createBoard } from "./generator";
 export {
   getLegalMoves,

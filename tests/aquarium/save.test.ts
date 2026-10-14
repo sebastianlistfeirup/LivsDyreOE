@@ -206,24 +206,27 @@ describe("aquarium saves and rewards", () => {
     expect(save.shells).toBe(450);
   });
 
-  it("prices the whole catalogue at 380, never extends credit, and keeps buys atomic", () => {
+  it("prices the expanded catalogue at 620, never extends credit, and keeps buys atomic", () => {
     expect(
       FISH.reduce((sum, fish) => sum + fish.price, 0) +
         DECORATIONS.reduce((sum, decor) => sum + decor.price, 0),
-    ).toBe(380);
+    ).toBe(620);
     const save = freshSave();
     const before = structuredClone(save);
     expect(purchase(save, "fish", "plet")).toMatch(/mangler/);
     expect(save).toEqual(before);
-    save.shells = 440;
+    save.shells = 1000;
+    save.adventure!.reefStage = 3;
+    save.completed = [6, 14, 22];
+    save.claimed = [6, 14, 22];
     for (const fish of FISH.filter((fish) => fish.price > 0))
       expect(purchase(save, "fish", fish.id)).toBeNull();
     DECORATIONS.forEach((decor, slot) =>
       expect(purchase(save, "decor", decor.id, slot)).toBeNull(),
     );
-    expect(save.shells).toBe(60);
+    expect(save.shells).toBe(380);
     expect(save.fishIds).toHaveLength(4);
-    expect(save.decorations).toHaveLength(8);
+    expect(save.decorations).toHaveLength(10);
     expect(validateSave(save)).toBe(true);
     const purchased = structuredClone(save);
     expect(purchase(save, "decor", "seagrass", 0)).toMatch(/allerede/);

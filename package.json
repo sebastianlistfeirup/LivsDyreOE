@@ -1,7 +1,7 @@
 {
   "name": "livs-dyreo",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -16,6 +16,7 @@
     "three": "0.175.0"
   },
   "devDependencies": {
+    "@types/node": "24.10.0",
     "@types/three": "0.175.0",
     "typescript": "5.8.3",
     "vite": "6.3.5",

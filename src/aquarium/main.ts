@@ -8,8 +8,28 @@ import {
   type TileType,
 } from "./core";
 import { DECORATIONS, FISH, KIND_NAMES } from "./content/catalog";
+import { getLevel } from "./content/levels";
+import {
+  adventureOf,
+  spendableShells,
+  regionForLevel,
+  nextReef,
+  canPlayLevel,
+  restoreReef,
+  upgradeDecoration,
+  decorationRefund,
+  rareStage,
+  nextStory,
+  claimStory,
+  goalSummary,
+  REGIONS,
+  UPGRADES,
+  type GoalId,
+  type RegionId,
+} from "./content/progression";
 import { Aquarium } from "./render/aquarium";
 import { BoardView } from "./render/board";
+import { installTouchActions } from "./render/touch";
 import { gemArt, coralArt, setGemTheme, getGemThemeName } from "./render/gems";
 import { Soundscape } from "./audio/sound";
 import {
@@ -18,10 +38,12 @@ import {
   loadSave,
   persist,
   purchase,
+  prepareSave,
   validateSave,
   type Save,
 } from "./save/store";
 import "./style.css";
+import "./expansion.css";
 
 declare const __BUILD_VERSION__: string;
 
@@ -67,17 +89,20 @@ audio.enabled = save.settings.sound;
 
 $("#app").innerHTML = `
   <div id="aquarium-scene"></div>
-  <main class="game-shell" aria-label="Livs akvarie">
+  <main class="game-shell" aria-label="Livs magiske akvarie">
     <header class="game-header">
       <button class="circle-button settings-button" data-action="settings" aria-label="Indstillinger">${uiIcon("settings")}</button>
-      <h1 class="game-logo">Livs <span>akvarie</span><i aria-hidden="true">✦</i></h1>
+      <h1 class="game-logo"><small>Livs magiske</small><span>akvarie</span><i aria-hidden="true">✦</i></h1>
       <button class="shell-wallet" data-action="shop" aria-label="Skaller og butik"><img src="${gemArt({ type: 0 })}" alt=""/><strong id="shell-count"></strong></button>
     </header>
     <section class="aquarium-window" aria-label="Dit levende akvarium">
       <div class="level-badge" id="level-badge">Bane 1</div>
       <button class="sound-tap" data-action="toggle-sound" aria-label="Slå lyd til">♪</button>
       <button id="coach" class="fish-message" data-action="read-help"><span id="coach-text">Træk en brik hen til en nabo.</span><span aria-hidden="true">♬</span></button>
+      <div id="special-tray" class="special-tray" hidden><span id="special-name"></span><button data-action="use-special">Brug <span>✦</span></button></div>
       <div class="aquarium-title"><span>DIT EGET LILLE HAV</span><h2>Plads til fantasi.</h2></div>
+      <button id="project-chip" class="project-chip" data-action="projects" aria-label="Dit næste akvarieprojekt"></button>
+      <div class="aquarium-actions"><button data-action="ambience" aria-label="Vælg område og lys">☀<span>Lys & hav</span></button><button data-action="postcard" aria-label="Lav et akvariepostkort">▣<span>Postkort</span></button></div>
     </section>
     <section class="goal-tray" aria-label="Banens mål">
       <div class="moves-counter"><strong id="moves-count">18</strong><span>TRÆK</span></div>
@@ -86,7 +111,6 @@ $("#app").innerHTML = `
     </section>
     <section class="play-zone" aria-label="Match tre ens">
       <div class="board-rim"><div id="board" class="board"></div></div>
-      <div id="special-tray" class="special-tray" hidden><span id="special-name"></span><button data-action="use-special">Brug <span>✦</span></button></div>
     </section>
     <div id="decor-tools" class="decor-tools" hidden></div>
     <nav class="game-toolbar" aria-label="Spilknapper">
@@ -147,17 +171,25 @@ function goalArt(kind: string): string {
   if (kind === "special")
     return `<img src="${gemArt({ type: 2, special: "bomb" })}" alt=""/>`;
   if (kind === "coral") return `<img src="${coralArt}" alt=""/>`;
+  if (kind === "clam")
+    return `<img src="${art("terrain-clam-closed")}" alt=""/>`;
   return '<span class="sand-icon" aria-hidden="true">≋</span>';
 }
 function renderHud(): void {
   $("#shell-count").textContent = String(save.shells);
   const b = save.active.board;
   setGemTheme(b.levelId);
-  document.body.dataset.gemTheme = String(Math.floor((b.levelId - 1) / 2));
+  document.body.dataset.gemTheme = String(b.levelId - 1);
+  const p = adventureOf(save),
+    goal = goalSummary(save);
+  document.body.dataset.region = regionForLevel(b.levelId).id;
   $("#moves-count").textContent = String(b.movesRemaining);
   $(".moves-counter").classList.toggle("low", b.movesRemaining <= 5);
   $("#level-badge").innerHTML =
-    `<span>Bane ${b.levelId} af 10</span><small>${getGemThemeName(b.levelId)}</small>`;
+    `<span>Bane ${b.levelId} af 30</span><small>${getGemThemeName(b.levelId)}</small>`;
+  $("#project-chip").innerHTML =
+    `<img src="${art(goal.image)}" alt=""/><span><small>${goal.ready ? "KLAR TIL AT BYGGE" : "DIT NÆSTE ØNSKE"}</small><strong>${esc(goal.title)}</strong><i><b style="width:${goal.price ? Math.min(100, (goal.saved / goal.price) * 100) : 100}%"></b></i></span><em>${goal.ready ? "✦" : `${Math.min(goal.saved, goal.price)}/${goal.price}`}</em>`;
+  $("#project-chip").classList.toggle("ready", goal.ready);
   $("#objectives").innerHTML = b.objectives
     .map(
       (o) =>
@@ -168,7 +200,12 @@ function renderHud(): void {
     fishIds: save.fishIds,
     placements: save.placements,
     fishStyles: save.fishStyles,
+    reefStage: p.reefStage,
+    upgrades: p.upgrades,
+    lighting: p.lighting,
+    region: mode === "play" ? regionForLevel(b.levelId).id : p.region,
   });
+  audio.setRegion(mode === "play" ? regionForLevel(b.levelId).id : p.region);
   document.body.classList.toggle("reduced-motion", save.settings.reducedMotion);
   aquarium.setReducedMotion(save.settings.reducedMotion);
   $(".sound-tap").textContent = save.settings.sound ? "♫" : "♪";
@@ -181,33 +218,196 @@ function renderHud(): void {
 }
 function modal(title: string, body: string, actions = ""): void {
   const dialog = $<HTMLDialogElement>("#modal");
-  dialog.innerHTML = `<button class="modal-close circle-button" data-action="close-modal" aria-label="Luk">×</button><div class="modal-heading"><span class="eyebrow">LIVS AKVARIE</span><h2>${title}</h2></div>${body}${actions ? `<div class="modal-actions">${actions}</div>` : ""}`;
+  dialog.innerHTML = `<button class="modal-close circle-button" data-action="close-modal" aria-label="Luk">×</button><div class="modal-heading"><span class="eyebrow">LIVS MAGISKE AKVARIE</span><h2>${title}</h2></div>${body}${actions ? `<div class="modal-actions">${actions}</div>` : ""}`;
   if (!dialog.open) dialog.showModal();
 }
 function closeModal(): void {
   $<HTMLDialogElement>("#modal").close();
   lastInteraction = performance.now();
 }
+function art(name: string): string {
+  return `${import.meta.env.BASE_URL}aquarium/art/${name}.webp`;
+}
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob),
+    link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+function undoDecoration(): void {
+  if (!undoPlacements || busy) return;
+  const previous = structuredClone(save);
+  save.placements = structuredClone(undoPlacements);
+  if (!commit()) {
+    save = previous;
+    renderHud();
+    return;
+  }
+  undoPlacements = null;
+  chosenDecor = null;
+  aquarium.setSelected(null);
+  renderHud();
+  $("#decor-tools").hidden = true;
+}
+function mutateSave(change: () => string | null): boolean {
+  const previous = structuredClone(save),
+    error = change();
+  if (error) {
+    save = previous;
+    toast(error);
+    return false;
+  }
+  if (!commit()) {
+    save = previous;
+    renderHud();
+    return false;
+  }
+  renderHud();
+  return true;
+}
+function goalPreview(): string {
+  const g = goalSummary(save);
+  return `<div class="wish-preview" id="reward-goal"><img src="${art(g.image)}" alt=""/><div><small>${g.ready ? "NU KAN DU BYGGE" : "DU SPARER OP TIL"}</small><strong>${esc(g.title)}</strong><progress max="${Math.max(1, g.price)}" value="${Math.min(g.saved, g.price)}"></progress><span>${g.price ? `${Math.min(g.saved, g.price)} / ${g.price} skaller` : "Allerede din"}</span></div></div>`;
+}
+function flyReward(): void {
+  if (save.settings.reducedMotion || !$<HTMLDialogElement>("#modal").open)
+    return;
+  const source = document.querySelector(".reward-orb"),
+    destination = document.querySelector("#reward-goal");
+  if (!source || !destination) return;
+  const a = source.getBoundingClientRect(),
+    b = destination.getBoundingClientRect(),
+    dialog = $("#modal"),
+    box = dialog.getBoundingClientRect();
+  for (let i = 0; i < 7; i++) {
+    const coin = document.createElement("img");
+    coin.src = gemArt({ type: 0 });
+    coin.className = "reward-flight";
+    coin.style.left = `${a.x + a.width / 2 - box.x - 15}px`;
+    coin.style.top = `${a.y + a.height / 2 - box.y + dialog.scrollTop - 15}px`;
+    dialog.append(coin);
+    const dx = b.x + 38 - a.x - a.width / 2,
+      dy = b.y + b.height / 2 - a.y - a.height / 2;
+    const animation = coin.animate(
+      [
+        { transform: "translate(0,0) scale(.5)", opacity: 0 },
+        {
+          transform: `translate(${(i - 3) * 15}px,-30px) scale(1.1)`,
+          opacity: 1,
+          offset: 0.3,
+        },
+        { transform: `translate(${dx}px,${dy}px) scale(.45)`, opacity: 0 },
+      ],
+      {
+        duration: 760,
+        delay: i * 70,
+        easing: "cubic-bezier(.25,.65,.4,1)",
+        fill: "both",
+      },
+    );
+    void animation.finished
+      .then(() => coin.remove())
+      .catch(() => coin.remove());
+  }
+  destination.animate(
+    [{ scale: "1" }, { scale: "1.035", offset: 0.6 }, { scale: "1" }],
+    { duration: 900, delay: 500 },
+  );
+}
+function projects(): void {
+  const p = adventureOf(save),
+    project = nextReef(save);
+  const reef = project
+    ? `<div class="reef-project"><div class="project-scene"><img src="${art(`region-${project.region}`)}" alt="${REGIONS.find((r) => r.id === project.region)!.name}"/><span>REVET · ETAPE ${p.reefStage + 1} AF 3</span></div><h3>${project.title}</h3><p>${project.detail}</p><progress max="${project.price}" value="${Math.min(p.reefSavings, project.price)}"></progress><div class="project-amount">${Math.min(p.reefSavings, project.price)} / ${project.price} revskaller <span>${save.completed.includes(project.after) ? "Banemålet er klaret ✓" : `Klar bane ${project.after}`}</span></div><button class="gold-button" data-action="restore-reef" ${p.reefSavings < project.price || !save.completed.includes(project.after) ? "disabled" : ""}>Væk revet · ${project.price} skaller</button></div>`
+    : `<div class="reef-project completed-reef"><img src="${art("fish-glimt")}" alt="Glimt"/><h3>Hele revet er vågnet!</h3><p>Koraller, perlelys og stimefisk. Alle fire områder er dine.</p></div>`;
+  const wishes: GoalId[] = ["reef", "cave", "ring", "pearl-tree", "moon-gate"];
+  const choices = wishes
+    .map((id) => {
+      const savedGoal = p.goal;
+      p.goal = id;
+      const g = goalSummary(save);
+      p.goal = savedGoal;
+      const stage = rareStage(id),
+        locked = stage > p.reefStage;
+      return `<button class="wish-choice ${p.goal === id ? "selected" : ""}" data-action="choose-goal" data-id="${id}" aria-pressed="${p.goal === id}"><img src="${art(g.image)}" alt=""/><span><strong>${esc(g.title)}</strong><small>${locked ? `Åbner i ${REGIONS[stage].name}` : g.price ? `${Math.min(g.saved, g.price)} / ${g.price} skaller` : "Alle trin bygget ✓"}</small></span><b>${p.goal === id ? "✓" : "♡"}</b></button>`;
+    })
+    .join("");
+  modal(
+    "Små skaller. Store drømme.",
+    `${reef}<p class="shell-explanation"><strong>${spendableShells(save)} frie skaller</strong> · ${p.reefSavings} til revet<br/>10 af hver ny banes 40 skaller gemmes til revet, indtil alle områder er åbne. Du kan bruge resten frit.</p><h3>Vælg dit næste ønske</h3><div class="wish-list">${choices}</div>${goalPreview()}`,
+    `${goalSummary(save).ready ? `<button class="gold-button" data-action="${goalSummary(save).action}" data-id="${p.goal}">Byg dit ønske ✦</button>` : ""}<button class="soft-button" data-action="close-modal">Tilbage til mit hav</button>`,
+  );
+}
+function ambience(): void {
+  const p = adventureOf(save);
+  modal(
+    "Dit lys. Dit lille hav.",
+    `<p>Stemningen ændrer kun udseendet. Fiskene har det altid godt.</p><div class="lighting-options">${(
+      [
+        ["day", "☀", "Solstrejf"],
+        ["dawn", "✦", "Morgenglød"],
+        ["moon", "☾", "Måneskin"],
+      ] as const
+    )
+      .map(
+        ([id, icon, name]) =>
+          `<button data-action="lighting" data-id="${id}" class="${p.lighting === id ? "active" : ""}" aria-pressed="${p.lighting === id}"><b>${icon}</b>${name}</button>`,
+      )
+      .join(
+        "",
+      )}</div><h3>Besøg et område</h3><div class="region-choices">${REGIONS.map((r) => `<button data-action="view-region" data-id="${r.id}" ${r.stage > p.reefStage ? "disabled" : ""} class="${p.region === r.id ? "active" : ""}"><img src="${art(r.id === "sun" ? "underwater-world" : `region-${r.id}`)}" alt=""/><span>${r.name}<small>${r.stage > p.reefStage ? `Revprojekt ${r.stage}` : "Besøg"}</small></span></button>`).join("")}</div>`,
+  );
+}
+function teachLevel(id: number): void {
+  const level = getLevel(id),
+    p = adventureOf(save);
+  if (!level.tutorial || p.seenTutorials.includes(id)) return;
+  const demo = level.clams.length
+    ? `<img src="${art("terrain-clam-closed")}" alt="Lukket musling"/><b>→</b><img src="${art("terrain-clam-cracked")}" alt="Musling efter første match"/><b>→</b><span>✦</span>`
+    : level.bubbles.length
+      ? `<span>↑</span><img src="${gemArt({ type: 2 })}" alt="En brik løftes af boblen"/><span>↑</span>`
+      : level.rocks.length
+        ? `<img src="${art("terrain-rock")}" alt="En fast sten"/><span>↔</span><img src="${gemArt({ type: 1 })}" alt="Byt brikkerne omkring stenen"/>`
+        : "<span>← ↓ → ↑</span>";
+  modal(
+    "En ny lille opdagelse",
+    `<div class="mechanic-demo mechanic-${level.clams.length ? "clam" : level.bubbles.length ? "bubble" : level.rocks.length ? "rock" : "current"}">${demo}</div><h3>${level.title}</h3><p>${esc(level.tutorial)}</p>`,
+    `<button class="gold-button" data-action="tutorial-done" data-id="${id}">Det prøver vi ✦</button>`,
+  );
+}
 function showWin(reward: number): void {
   if (reward > 0) {
     aquarium.celebrate();
     audio.play("win");
   }
-  const final = save.completed.length === 10;
+  const final = save.completed.length === 30,
+    goal = goalSummary(save);
+  const next = Math.min(30, save.active.board.levelId + 1),
+    gated = !canPlayLevel(save, next);
   modal(
     final
       ? "Dit hav er fuldt af liv."
       : reward
         ? "En ny lille sejr."
         : "Klar til det næste eventyr?",
-    `<div class="reward-orb"><img src="${gemArt({ type: 0 })}" alt="Muslingeskaller"/><strong>${reward ? `+${reward}` : "✓"}</strong></div><p>${final ? "Alle ti baner er gennemført. Fiskene holder fest — og du kan stadig spille og indrette videre." : reward ? "Du har samlet skaller til dit akvarium. Hvad skal fiskene udforske nu?" : "Banen er klaret, og dine skaller er gemt. Du kan indrette videre eller tage den næste bane."}</p>`,
-    `<button class="gold-button" data-action="win-decorate">Indret akvariet <span>→</span></button><button class="soft-button" data-action="next-level">${save.active.board.levelId < 10 ? "Næste bane" : "Spil igen"}</button>`,
+    `<div class="reward-orb"><img src="${gemArt({ type: 0 })}" alt="Muslingeskaller"/><strong>${reward ? `+${reward}` : "✓"}</strong></div><p>${final ? "Alle 30 baner er gennemført! Dit magiske hav lever videre — indret, besøg fiskene og gem et postkort." : reward === 40 ? `${adventureOf(save).reefStage < 3 ? "10 af dine 40 skaller er lagt trygt til side til revet. Resten kan du indrette med." : "40 nye skaller til dit eget magiske hav."}` : reward ? "10 nye skaller til dit næste ønske." : "Banen og dine skaller er gemt."}</p>${goalPreview()}`,
+    `${goal.ready ? `<button class="gold-button" data-action="${goal.action}" data-id="${goal.id}">Byg ${esc(goal.title.toLowerCase())} ✦</button>` : ""}<button class="${goal.ready ? "soft" : "gold"}-button" data-action="${gated ? "projects" : "next-level"}">${gated ? "Væk revet · åbn næste område" : final ? "Spil sidste bane igen" : "Næste bane →"}</button><button class="text-button" data-action="win-decorate">Besøg dit akvarium</button>`,
   );
+  if (reward) window.setTimeout(flyReward, 120);
 }
 function finishWin(): void {
-  const reward = awardWin(save);
-  if (!commit()) return;
-  renderHud();
+  let reward = 0;
+  if (
+    !mutateSave(() => {
+      reward = awardWin(save);
+      return null;
+    })
+  )
+    return;
   if (reward) showWin(reward);
 }
 function noMoves(): void {
@@ -223,6 +423,10 @@ board.onAction = async (action: Action) => {
   lastInteraction = performance.now();
   if (save.active.rewarded) {
     showWin(0);
+    return;
+  }
+  if (isWon(save.active.board)) {
+    finishWin();
     return;
   }
   if (save.active.board.movesRemaining <= 0) {
@@ -275,6 +479,7 @@ board.onSelect = (cell) => {
   const tile = cell === null ? null : save.active.board.tiles[cell];
   const tray = $("#special-tray");
   tray.hidden = !tile?.special;
+  $("#coach").hidden = !!tile?.special;
   if (tile?.special) {
     $("#special-name").textContent =
       tile.special === "color"
@@ -290,7 +495,13 @@ board.onSelect = (cell) => {
     lastInteraction = performance.now();
   }
 };
-board.onEffect = (kind, chain) => audio.play(kind, chain);
+board.onEffect = (kind, chain) => {
+  audio.play(kind, chain);
+  if (!save.settings.reducedMotion && "vibrate" in navigator)
+    navigator.vibrate(
+      kind === "special" ? [10, 25, 14] : Math.min(12, 4 + chain),
+    );
+};
 board.onClear = (event) => {
   if (save.settings.reducedMotion || document.hidden) return;
   const rect = $("#board").getBoundingClientRect(),
@@ -347,6 +558,7 @@ function switchMode(next: "play" | "aquarium"): void {
     return;
   }
   mode = next;
+  board.select(null);
   chosenDecor = null;
   document.body.classList.toggle("aquarium-mode", mode === "aquarium");
   aquarium.setMode(mode === "aquarium" ? "decorate" : "backdrop");
@@ -363,11 +575,20 @@ function switchMode(next: "play" | "aquarium"): void {
     if (save.active.rewarded)
       toast("Banen er klaret. Vælg næste bane under Baner.");
   }
+  renderHud();
 }
 function startLevel(id: number): void {
   if (busy) return;
+  if (!canPlayLevel(save, id)) {
+    projects();
+    return;
+  }
+  const previous = structuredClone(save);
   save.active = { board: createBoard(id), pending: null, rewarded: false };
-  commit();
+  if (!commit()) {
+    save = previous;
+    return;
+  }
   closeModal();
   switchMode("play");
   renderHud();
@@ -377,12 +598,30 @@ function startLevel(id: number): void {
       ? "Prøv at samle fire blade på række."
       : `Saml ${objectiveText()}.`;
   if (id === 1 || id === 3 || id === 7) board.hint(suggestedAction());
+  teachLevel(id);
 }
 function levelMenu(): void {
-  const unlocked = Math.min(10, Math.max(0, ...save.completed) + 1);
+  const p = adventureOf(save);
   modal(
-    "En lille rejse under vand.",
-    `<p>Ti baner. Ingen tidspres. Alle forsøg er gratis.</p><div class="level-grid">${Array.from({ length: 10 }, (_, i) => `<button class="level-choice ${save.completed.includes(i + 1) ? "done" : ""}" data-action="choose-level" data-id="${i + 1}" ${i + 1 > unlocked ? "disabled" : ""}><span>${i + 1}</span><small>${save.completed.includes(i + 1) ? "✓" : i + 1 > unlocked ? "Låst" : "Spil"}</small></button>`).join("")}</div>`,
+    "30 små eventyr under vand.",
+    `<p>Nye skatte og en ny baneform hver gang. Ingen tidspres — alle forsøg er gratis.</p>${REGIONS.map(
+      (region) =>
+        `<section class="level-region"><h3>${region.name}<small>${save.completed.filter((id) => id >= region.first && id <= region.last).length}/${region.last - region.first + 1}</small></h3>${region.stage > p.reefStage ? `<button class="region-lock" data-action="projects">✧ Åbn med revprojekt ${region.stage}</button>` : ""}<div class="level-grid">${Array.from(
+          { length: region.last - region.first + 1 },
+          (_, i) => {
+            const id = region.first + i,
+              level = getLevel(id),
+              done = save.completed.includes(id),
+              open = canPlayLevel(save, id);
+            const shape = Array.from(
+              { length: 64 },
+              (_, c) =>
+                `<i class="${level.voids.includes(c) ? "water" : level.rocks.includes(c) ? "stone" : ""}"></i>`,
+            ).join("");
+            return `<button class="level-choice ${done ? "done" : ""}" data-action="choose-level" data-id="${id}" ${open ? "" : "disabled"} aria-label="Bane ${id}: ${level.title}${done ? ", klaret" : ""}"><span>${id}</span><div class="mini-board" aria-hidden="true">${shape}</div><small>${done ? "✓" : open ? "Spil" : "Låst"}</small></button>`;
+          },
+        ).join("")}</div></section>`,
+    ).join("")}`,
   );
 }
 function requestLevel(id: number): void {
@@ -404,7 +643,7 @@ function shop(category: "decor" | "fish" = "decor"): void {
     category === "decor"
       ? DECORATIONS.map(
           (d) =>
-            `<button class="shop-item ${save.decorations.includes(d.id) ? "owned" : ""}" data-action="select-decor" data-id="${d.id}"><span class="shop-art">${d.icon}</span><strong>${d.name}</strong><small>${save.decorations.includes(d.id) ? "Flyt · allerede din" : `${d.price} skaller`}</small></button>`,
+            `<button class="shop-item ${save.decorations.includes(d.id) ? "owned" : ""}" data-action="select-decor" data-id="${d.id}" ${rareStage(d.id) > adventureOf(save).reefStage ? "disabled" : ""}><img class="decor-shop-art" src="${art(`decor-${d.id}`)}" alt=""/><strong>${d.name}</strong><small>${save.decorations.includes(d.id) ? "Flyt · allerede din" : rareStage(d.id) > adventureOf(save).reefStage ? `Revprojekt ${rareStage(d.id)}` : `${d.price} skaller`}</small></button>`,
         ).join("")
       : FISH.map(
           (f) =>
@@ -414,7 +653,7 @@ function shop(category: "decor" | "fish" = "decor"): void {
     category === "decor"
       ? "Gør havet til dit."
       : "Små fisk. Store personligheder.",
-    `<div class="shop-tabs"><button data-action="shop" class="${category === "decor" ? "active" : ""}">Indretning</button><button data-action="fish-shop" class="${category === "fish" ? "active" : ""}">Fisk</button><span>${save.shells} skaller</span></div><div class="shop-grid">${list}</div><p class="fine-print">Flyt gratis. Dekorationer kan sælges tilbage til fuld pris.</p>`,
+    `<div class="shop-tabs"><button data-action="shop" class="${category === "decor" ? "active" : ""}">Indretning</button><button data-action="fish-shop" class="${category === "fish" ? "active" : ""}">Fisk</button><span>${spendableShells(save)} frie skaller</span></div><div class="shop-grid">${list}</div><button class="reserve-note" data-action="projects">✧ ${adventureOf(save).reefSavings} skaller er gemt til revet · Se projekter</button><p class="fine-print">Træk ting med fingeren for at flytte. Alle køb og opgraderinger kan sælges tilbage til fuld pris.</p>`,
   );
 }
 function selectDecor(id: string): void {
@@ -426,8 +665,12 @@ function selectDecor(id: string): void {
   aquarium.setSelected(id);
   const owned = save.decorations.includes(id),
     tools = $("#decor-tools");
+  const upgrade =
+    id === "cave" || id === "ring"
+      ? UPGRADES[id][adventureOf(save).upgrades[id] ?? 0]
+      : null;
   tools.hidden = false;
-  tools.innerHTML = `<div><strong>${def.name}</strong><span>${owned ? "Tryk på en tom plads for at flytte." : `Vælg en tom plads · ${def.price} skaller`}</span></div>${owned ? '<button data-action="rotate-decor" aria-label="Drej">↻</button><button data-action="sell-decor">Sælg</button>' : ""}<button data-action="cancel-decor" aria-label="Annuller placering">×</button>`;
+  tools.innerHTML = `<div><strong>${def.name}</strong><span>${owned ? "Træk med fingeren · eller vælg en tom plads." : `Tryk på en lysende plads · ${def.price} skaller`}</span></div>${owned ? `${upgrade ? `<button data-action="upgrade-preview" data-id="${id}">✦<small>Udvid</small></button>` : ""}<button data-action="rotate-decor" aria-label="Drej">↻</button><button data-action="sell-decor">Sælg</button>` : ""}<button data-action="cancel-decor" aria-label="Annuller placering">×</button>`;
 }
 aquarium.onSlot = (slot) => {
   const existing = save.placements.find((p) => p.slot === slot);
@@ -445,6 +688,8 @@ aquarium.onSlot = (slot) => {
   if (placed) {
     undoPlacements = structuredClone(save.placements);
     placed.slot = slot;
+    delete placed.x;
+    delete placed.y;
   } else {
     const error = purchase(save, "decor", chosenDecor, slot);
     if (error) {
@@ -468,6 +713,27 @@ aquarium.onSlot = (slot) => {
     $("#decor-tools").innerHTML =
       '<div><strong>Sådan.</strong><span>Indretningen er gemt.</span></div><button data-action="undo-decor">Fortryd</button><button data-action="cancel-decor" aria-label="Luk">×</button>';
 };
+aquarium.onMove = (id, x, y) => {
+  const previous = structuredClone(save),
+    placement = save.placements.find((p) => p.id === id);
+  if (!placement) return;
+  const undo = structuredClone(save.placements);
+  placement.x = x;
+  placement.y = y;
+  if (!commit()) {
+    save = previous;
+    renderHud();
+    return;
+  }
+  undoPlacements = undo;
+  chosenDecor = null;
+  aquarium.setSelected(null);
+  renderHud();
+  audio.play("pick");
+  $("#decor-tools").hidden = false;
+  $("#decor-tools").innerHTML =
+    '<div><strong>Lige dér.</strong><span>Placeringen er gemt.</span></div><button data-action="undo-decor">Fortryd</button><button data-action="cancel-decor" aria-label="Luk">×</button>';
+};
 aquarium.onFish = (id) => fishCard(id);
 function fishCard(id: string): void {
   const fish = FISH.find((f) => f.id === id);
@@ -477,25 +743,30 @@ function fishCard(id: string): void {
   const favorite = DECORATIONS.find(
     (d) => d.id === (style?.favorite || fish.favorite),
   )!;
+  const story = nextStory(save, id),
+    storyHTML = owned
+      ? `<div class="fish-story"><small>${story ? `FISKENS FORTÆLLING · ${story.chapter}/2` : "TO SMÅ EVENTYR · KLARET"}</small><h3>${story?.title ?? "Et hav af gode minder"}</h3><p>${story ? (story.ready ? story.line : story.need) : "Dit akvarium har givet denne ven nye steder at udforske."}</p>${story?.ready ? `<button class="gold-button" data-action="fish-story" data-id="${id}">Se det lille øjeblik ♡</button>` : ""}</div>`
+      : "";
   modal(
     esc(style?.name || fish.name),
-    `<img class="fish-portrait" src="${import.meta.env.BASE_URL}aquarium/art/fish-${id}.webp" alt="${fish.name}"/><p class="fish-personality">${fish.personality} · ${favorite.icon} ${favorite.name}</p><p>“${fish.line}”</p>${owned ? `<label class="field-label">Dit navn til fisken<input id="fish-name" maxlength="24" value="${esc(style?.name || fish.name)}" /></label><label class="field-label">Yndlingsting<select id="fish-favorite">${DECORATIONS.map((d) => `<option value="${d.id}" ${favorite.id === d.id ? "selected" : ""}>${d.name}</option>`).join("")}</select></label><label class="field-label">Lille farveskær<input type="color" id="fish-color" value="${style?.color || fish.color}" /></label>` : `<p>Flytter ind for ${fish.price} skaller.</p>`}`,
+    `<img class="fish-portrait" src="${import.meta.env.BASE_URL}aquarium/art/fish-${id}.webp" alt="${fish.name}"/><p class="fish-personality">${fish.personality} · ${favorite.icon} ${favorite.name}</p><p>“${fish.line}”</p>${storyHTML}${owned ? `<label class="field-label">Dit navn til fisken<input id="fish-name" maxlength="24" value="${esc(style?.name || fish.name)}" /></label><label class="field-label">Yndlingsting<select id="fish-favorite">${DECORATIONS.map((d) => `<option value="${d.id}" ${favorite.id === d.id ? "selected" : ""}>${d.name}</option>`).join("")}</select></label><label class="field-label">Lille farveskær<input type="color" id="fish-color" value="${style?.color || fish.color}" /></label>` : `<p>Flytter ind for ${fish.price} skaller.</p>`}`,
     owned
       ? `<button class="gold-button" data-action="save-fish" data-id="${id}">Gem din fisk</button><button class="text-button" data-action="hear-fish" data-id="${id}">♬ Hør fisken</button>`
-      : `<button class="gold-button" data-action="buy-fish" data-id="${id}" ${save.shells < fish.price ? "disabled" : ""}>Byd ${fish.name} velkommen · ${fish.price}</button>`,
+      : `<button class="gold-button" data-action="buy-fish" data-id="${id}" ${spendableShells(save) < fish.price ? "disabled" : ""}>Byd ${fish.name} velkommen · ${fish.price}</button>`,
   );
 }
 function help(): void {
+  const combos = `<div class="combo-guide"><h3>To specialer = ekstra magi</h3><div><img src="${gemArt({ type: 0, special: "row" })}" alt="Stråle"/> + <img src="${gemArt({ type: 1, special: "column" })}" alt="Stråle"/><span><strong>Lysende kryds</strong>En hel række og kolonne.</span></div><div><img src="${gemArt({ type: 2, special: "bomb" })}" alt="Bombe"/> + <img src="${gemArt({ type: 0, special: "row" })}" alt="Stråle"/><span><strong>Bred boblebølge</strong>Tre rækker og tre kolonner.</span></div><div><img src="${gemArt({ type: 4, special: "color" })}" alt="Farveperle"/> + <img src="${gemArt({ type: 4, special: "color" })}" alt="Farveperle"/><span><strong>Regnbuekaskade</strong>Alle brikker på brættet.</span></div></div>`;
   modal(
     "En lille hjælpende boble.",
-    `<p id="help-copy">Saml ${objectiveText()}. Træk en brik til en nabo, eller tryk på to naboer. Tre ens forsvinder. Et bytte uden match koster ingenting.</p><div class="special-guide"><div><img src="${gemArt({ type: 0, special: "row" })}" alt="Stråle"/><span><strong>4 på række</strong>En stråle rydder en hel linje.</span></div><div><img src="${gemArt({ type: 2, special: "bomb" })}" alt="Boblebombe"/><span><strong>L eller T</strong>En boblebombe rydder 3 × 3.</span></div><div><img src="${gemArt({ type: 4, special: "color" })}" alt="Farveperle"/><span><strong>5 på række</strong>Byt perlen med en farve og ryd den.</span></div></div><p class="fine-print">Sand ryddes under en brik. Koraller ryddes ved et match lige ved siden af eller en specialeffekt.</p>`,
+    `<p id="help-copy">Saml ${objectiveText()}. Træk en brik til en nabo, eller tryk på to naboer. Tre ens forsvinder. Et bytte uden match koster ingenting.</p><div class="special-guide"><div><img src="${gemArt({ type: 0, special: "row" })}" alt="Stråle"/><span><strong>4 på række</strong>En stråle rydder en hel linje.</span></div><div><img src="${gemArt({ type: 2, special: "bomb" })}" alt="Boblebombe"/><span><strong>L eller T</strong>En boblebombe rydder 3 × 3.</span></div><div><img src="${gemArt({ type: 4, special: "color" })}" alt="Farveperle"/><span><strong>5 på række</strong>Byt perlen med en farve og ryd den.</span></div></div>${combos}<p class="fine-print">Sand ryddes under en brik. Koraller ryddes ved et nabomatch eller en specialeffekt. Sten bliver stående. Muslinger åbner efter to træffere. Bobler løfter en brik, og strømpilen viser faldretningen.</p>`,
     '<button class="gold-button" data-action="show-hint">Vis mig et træk</button><button class="soft-button" data-action="speak-help">♬ Læs højt</button>',
   );
 }
 function settings(): void {
   modal(
     "Dit tempo. Dit hav.",
-    `<div class="settings-list"><label><span>Lyd og små klange</span><input type="checkbox" data-setting="sound" ${save.settings.sound ? "checked" : ""}/></label><label><span>Vis et hint efter en pause</span><input type="checkbox" data-setting="hints" ${save.settings.hints ? "checked" : ""}/></label><label><span>Roligere bevægelser</span><input type="checkbox" data-setting="reducedMotion" ${save.settings.reducedMotion ? "checked" : ""}/></label></div><p class="fine-print">Spillet gemmes på denne enhed. Gem en kopi for at flytte dit akvarium til en anden telefon eller iPad.</p><div class="save-buttons"><button class="soft-button" data-action="export">Gem en kopi</button><button class="soft-button" data-action="import">Åbn en kopi</button></div><p class="fine-print">Livs akvarie · ${__BUILD_VERSION__}<br/>Ingen reklamer, køb, liv eller ventetid.<br/>Oplæsning bruger enhedens tilgængelige danske stemme.</p>`,
+    `<div class="settings-list"><label><span>Lyd og små klange</span><input type="checkbox" data-setting="sound" ${save.settings.sound ? "checked" : ""}/></label><label><span>Vis et hint efter en pause</span><input type="checkbox" data-setting="hints" ${save.settings.hints ? "checked" : ""}/></label><label><span>Roligere bevægelser</span><input type="checkbox" data-setting="reducedMotion" ${save.settings.reducedMotion ? "checked" : ""}/></label></div><p class="fine-print">Spillet gemmes på denne enhed. Gem en kopi for at flytte dit akvarium til en anden telefon eller iPad.</p><div class="save-buttons"><button class="soft-button" data-action="export">Gem en kopi</button><button class="soft-button" data-action="import">Åbn en kopi</button></div><p class="fine-print">Livs magiske akvarie · ${__BUILD_VERSION__}<br/>Ingen reklamer, betaling, liv eller ventetid.<br/>Oplæsning bruger enhedens tilgængelige danske stemme.</p>`,
   );
 }
 
@@ -513,7 +784,114 @@ document.addEventListener("click", async (event) => {
   lastInteraction = performance.now();
   if (action !== "settings") void audio.unlock();
   if (action === "close-modal") closeModal();
-  else if (action === "toggle-sound") {
+  else if (action === "projects") projects();
+  else if (
+    action === "choose-goal" &&
+    id &&
+    ["reef", "cave", "ring", "pearl-tree", "moon-gate"].includes(id)
+  ) {
+    if (
+      mutateSave(() => {
+        adventureOf(save).goal = id as GoalId;
+        return null;
+      })
+    )
+      projects();
+  } else if (action === "restore-reef") {
+    const project = nextReef(save);
+    if (mutateSave(() => restoreReef(save))) {
+      closeModal();
+      switchMode("aquarium");
+      aquarium.celebrate();
+      audio.play("win");
+      toast(project?.celebration || "Revet er vågnet.");
+    }
+  } else if (action === "goal-place" && id) selectDecor(id);
+  else if (action === "upgrade-preview" && (id === "cave" || id === "ring")) {
+    const upgrade = UPGRADES[id][adventureOf(save).upgrades[id] ?? 0];
+    if (upgrade)
+      modal(
+        upgrade.title,
+        `<img class="upgrade-portrait" src="${art(`decor-${id}`)}" alt=""/><p>${upgrade.detail}</p><p>${spendableShells(save)} frie skaller · fuld tilbagebetaling ved salg.</p>`,
+        `<button class="gold-button" data-action="upgrade-decor" data-id="${id}" ${spendableShells(save) < upgrade.price ? "disabled" : ""}>Byg ud · ${upgrade.price} skaller</button>`,
+      );
+  } else if (action === "upgrade-decor" && id) {
+    if (mutateSave(() => upgradeDecoration(save, id))) {
+      closeModal();
+      switchMode("aquarium");
+      aquarium.celebrate();
+      audio.play("buy");
+      aquarium.playStory(id === "cave" ? "sky" : "glimt", 2);
+      toast("En ny udvidelse — og en ny tur for fiskene.");
+    }
+  } else if (action === "fish-story" && id) {
+    const story = nextStory(save, id);
+    if (
+      story?.ready &&
+      mutateSave(() =>
+        claimStory(save, id) ? null : "Det øjeblik er ikke klar endnu.",
+      )
+    ) {
+      closeModal();
+      switchMode("aquarium");
+      aquarium.playStory(id, story.chapter);
+      audio.play("buy");
+      if (save.settings.sound) audio.speak(story.line);
+      toast(story.line);
+    }
+  } else if (action === "ambience") ambience();
+  else if (
+    action === "lighting" &&
+    (id === "day" || id === "dawn" || id === "moon")
+  ) {
+    if (
+      mutateSave(() => {
+        adventureOf(save).lighting = id;
+        return null;
+      })
+    )
+      ambience();
+  } else if (action === "view-region" && id) {
+    const region = REGIONS.find((r) => r.id === id);
+    if (
+      region &&
+      region.stage <= adventureOf(save).reefStage &&
+      mutateSave(() => {
+        adventureOf(save).region = id as RegionId;
+        return null;
+      })
+    ) {
+      closeModal();
+      switchMode("aquarium");
+    }
+  } else if (action === "postcard") {
+    target.disabled = true;
+    try {
+      const blob = await aquarium.exportPostcard();
+      downloadBlob(
+        blob,
+        `livs-magiske-akvarie-${new Date().toISOString().slice(0, 10)}.png`,
+      );
+      toast(
+        "Dit postkort er klar som billede. Gem det i Fotos eller del det fra telefonens download.",
+      );
+    } catch {
+      toast(
+        "Billedet kunne ikke laves endnu. Vent til havet er indlæst, og prøv igen.",
+      );
+    } finally {
+      target.disabled = false;
+    }
+  } else if (action === "tutorial-done" && id) {
+    if (
+      mutateSave(() => {
+        const seen = adventureOf(save).seenTutorials;
+        if (!seen.includes(Number(id))) seen.push(Number(id));
+        return null;
+      })
+    )
+      closeModal();
+  } else if (action === "toggle-sound") {
     save.settings.sound = !save.settings.sound;
     audio.enabled = save.settings.sound;
     if (audio.enabled) void audio.unlock().then(() => audio.play("buy"));
@@ -536,7 +914,7 @@ document.addEventListener("click", async (event) => {
   } else if (action === "choose-level" && id) requestLevel(Number(id));
   else if (action === "start-level" && id) startLevel(Number(id));
   else if (action === "next-level")
-    startLevel(Math.min(10, save.active.board.levelId + 1));
+    startLevel(Math.min(30, save.active.board.levelId + 1));
   else if (action === "retry-level") startLevel(save.active.board.levelId);
   else if (action === "extra-moves" || action === "suggest-after-loss") {
     save.active.board = grantMoves(save.active.board);
@@ -547,7 +925,7 @@ document.addEventListener("click", async (event) => {
   } else if (action === "win-decorate") {
     closeModal();
     switchMode("aquarium");
-    shop();
+    toast("Tryk på dit ønske, en fisk eller Indret.");
   } else if (action === "help") help();
   else if (action === "show-hint") {
     closeModal();
@@ -574,27 +952,30 @@ document.addEventListener("click", async (event) => {
       renderHud();
     }
   } else if (action === "undo-decor" && undoPlacements) {
-    save.placements = undoPlacements;
-    undoPlacements = null;
-    commit();
-    renderHud();
-    $("#decor-tools").hidden = true;
+    undoDecoration();
   } else if (action === "sell-decor" && chosenDecor) {
     const def = DECORATIONS.find((d) => d.id === chosenDecor)!;
+    const refund = decorationRefund(save, def.id);
     modal(
       `Sælg ${def.name.toLowerCase()}?`,
-      `<p>Du får alle ${def.price} skaller tilbage. Fiskene har det stadig godt.</p>`,
-      `<button class="gold-button" data-action="confirm-sell" data-id="${def.id}">Sælg for ${def.price}</button><button class="soft-button" data-action="close-modal">Behold</button>`,
+      `<p>Du får alle ${refund} skaller tilbage, inklusive eventuelle udvidelser. Fiskene har det stadig godt.</p>`,
+      `<button class="gold-button" data-action="confirm-sell" data-id="${def.id}">Sælg for ${refund}</button><button class="soft-button" data-action="close-modal">Behold</button>`,
     );
   } else if (action === "confirm-sell" && id && save.decorations.includes(id)) {
-    save.shells += DECORATIONS.find((d) => d.id === id)!.price;
-    save.decorations = save.decorations.filter((d) => d !== id);
-    save.placements = save.placements.filter((p) => p.id !== id);
+    if (
+      !mutateSave(() => {
+        save.shells += decorationRefund(save, id);
+        delete adventureOf(save).upgrades[id];
+        save.decorations = save.decorations.filter((d) => d !== id);
+        save.placements = save.placements.filter((p) => p.id !== id);
+        return null;
+      })
+    )
+      return;
     undoPlacements = null;
     chosenDecor = null;
     aquarium.setSelected(null);
     $("#decor-tools").hidden = true;
-    commit();
     renderHud();
     closeModal();
   } else if (action === "fish-card" && id) fishCard(id);
@@ -630,7 +1011,7 @@ document.addEventListener("click", async (event) => {
       url = URL.createObjectURL(blob),
       a = document.createElement("a");
     a.href = url;
-    a.download = `livs-akvarie-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `livs-magiske-akvarie-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   } else if (action === "import") $<HTMLInputElement>("#import-file").click();
@@ -674,17 +1055,17 @@ $<HTMLInputElement>("#import-file").addEventListener(
       const imported: unknown = JSON.parse(await file.text());
       if (!validateSave(imported))
         throw new Error(
-          "Filen er ikke en gyldig Livs akvarie-gemning i denne version. Dit nuværende spil er urørt.",
+          "Filen er ikke en gyldig Livs magiske akvarie-gemning i denne version. Dit nuværende spil er urørt.",
         );
       modal(
         "Åbn dette akvarium?",
-        `<p>Livs akvarie · ${new Date(imported.updatedAt).toLocaleString("da-DK")}<br/>${imported.completed.length} baner · ${imported.fishIds.length} fisk · ${imported.shells} skaller.</p><p>Det erstatter akvariet på denne enhed. Den nuværende gemning bevares som sikkerhedskopi.</p>`,
+        `<p>Livs magiske akvarie · ${new Date(imported.updatedAt).toLocaleString("da-DK")}<br/>${imported.completed.length} baner · ${imported.fishIds.length} fisk · ${imported.shells} skaller.</p><p>Det erstatter akvariet på denne enhed. Den nuværende gemning bevares som sikkerhedskopi.</p>`,
         '<button id="confirm-import" class="gold-button">Åbn kopien</button><button class="soft-button" data-action="close-modal">Annullér</button>',
       );
       $("#confirm-import").addEventListener(
         "click",
         () => {
-          save = imported;
+          save = prepareSave(imported);
           saveBlocked = false;
           if (commit()) location.reload();
         },
@@ -718,6 +1099,7 @@ window.setInterval(() => {
   }
 }, 1000);
 
+installTouchActions();
 renderHud();
 board.show(save.active.board);
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
