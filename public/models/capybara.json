@@ -1,0 +1,21 @@
+{
+  "name": "Livs Dyre\u00f8 original capybara",
+  "license": "Original work for this repository",
+  "up": "+Y",
+  "forward": "+Z",
+  "groundY": 0,
+  "nominalLengthMetres": 1.25,
+  "nominalShoulderHeightMetres": 0.61,
+  "clips": {
+    "Walk": {
+      "durationSeconds": 1.2,
+      "cycleDistanceMetres": 0.42,
+      "stanceTravelMetres": 0.273,
+      "rootSpeedMetresPerSecond": 0.35
+    },
+    "Idle": {
+      "durationSeconds": 1.2
+    }
+  },
+  "source": "tools/art/create_capybara.py"
+}

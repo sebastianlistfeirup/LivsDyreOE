@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { DOCK, HEIGHT, OBJECT_BY_ID, WIDTH } from '../content/data';
 import { cellKey, edgeKey, footprint, home } from '../core/game';
 import type { GameState, Point, Species } from '../core/types';
+import { createCapybara, loadCapybara, type CapybaraActor } from './capybara';
+import { LocomotionController } from './locomotion';
 
 type Preview = { at: Point; side: number; valid: boolean; definitionId: string | null; rotation: 0 | 1 } | null;
 
@@ -15,6 +17,9 @@ const pathTile = new THREE.BoxGeometry(0.83, 0.035, 0.83);
 const shadowDisk = new THREE.CircleGeometry(1, 16);
 const shadowInk = new THREE.MeshBasicMaterial({ color: '#28442c', transparent: true, opacity: 0.17, depthWrite: false });
 const MAX_ZOOM = 8;
+// One path tile is roughly 1.25 metres; capy shoulder height remains well
+// below an adult visitor's waist instead of using oversized animal billboards.
+const CAPY_SCALE = 0.8;
 
 function mesh(geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1): THREE.Mesh {
   const m = new THREE.Mesh(geometry, material);
@@ -60,6 +65,7 @@ function addObject(group: THREE.Group, object: GameState['placedObjects'][number
     sprite.scale.set(width, height, 1);
     sprite.position.y = height * 0.48;
     if (id === 'pond') sprite.position.x += 0.3;
+    if (id === 'shelter' || id === 'cave' || id === 'portal') g.add(groundShadow(0, 0, width * 0.32, width * 0.2));
     g.add(sprite);
   } else if (id === 'shrub') {
     g.add(mesh(ball, leaf, -0.19, 0.28, 0, 0.3, 0.26, 0.4));
@@ -95,18 +101,19 @@ export class ParkScene {
   private staticGroup = new THREE.Group();
   private dynamicGroup = new THREE.Group();
   private dynamicMaterials: THREE.Material[] = [];
-  private animated: { object: THREE.Object3D; origin: THREE.Vector3; kind: 'animal' | 'visitor' | 'tree' | 'butterfly'; route?: THREE.Vector3[]; delay?: number; wings?: THREE.Object3D[]; sprite?: THREE.Sprite; baseY?: number; capyWalk?: boolean }[] = [];
+  private animated: { object: THREE.Object3D; origin: THREE.Vector3; kind: 'animal' | 'visitor' | 'tree' | 'butterfly'; route?: THREE.Vector3[]; delay?: number; wings?: THREE.Object3D[]; sprite?: THREE.Sprite; baseY?: number }[] = [];
   private terrainGrid: THREE.LineSegments | null = null;
   private animalMaterials: Record<Species, THREE.SpriteMaterial>;
-  private capyFrames: THREE.Texture[];
-  private capyFramesLoaded = new Set<number>();
+  private capyActors = new Map<string, { actor: CapybaraActor; controller: LocomotionController; routeKey: string }>();
+  private latestDraw: { state: GameState; preview: Preview } | null = null;
+  private previousTime = performance.now() / 1000;
   private propMaterials: Record<string, THREE.SpriteMaterial>;
   private treeMaterial: THREE.SpriteMaterial;
   private seaTexture: THREE.Texture | null = null;
   private ray = new THREE.Raycaster();
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private target = new THREE.Vector3(-5.5, 0, 6);
-  private zoom = 1.9;
+  private target = new THREE.Vector3(-3.4, 0, 6);
+  private zoom = 2;
   private motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   private pointerStart: { x: number; y: number } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
@@ -120,12 +127,14 @@ export class ParkScene {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     const loader = new THREE.TextureLoader();
-    this.capyFrames = Array.from({ length: 15 }, (_, index) => {
-      const texture = loader.load(`${import.meta.env.BASE_URL}art/capy-walk-${index + 1}.webp`, () => this.capyFramesLoaded.add(index));
-      texture.colorSpace = THREE.SRGBColorSpace;
-      return texture;
-    });
+    void loadCapybara().then(() => {
+      if (this.latestDraw) this.draw(this.latestDraw.state, this.latestDraw.preview);
+    }).catch(error => console.warn('3D-kapivaren kunne ikke hentes; viser det stillestående dyreportræt.', error));
     this.animalMaterials = Object.fromEntries((['capybara', 'tiger', 'penguin'] as Species[]).map(species => {
       const texture = loader.load(`${import.meta.env.BASE_URL}art/${species}.webp`);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -140,8 +149,13 @@ export class ParkScene {
     treeTexture.colorSpace = THREE.SRGBColorSpace;
     this.treeMaterial = new THREE.SpriteMaterial({ map: treeTexture, transparent: true, alphaTest: 0.03, depthWrite: false });
     this.host.appendChild(this.renderer.domElement);
-    this.scene.add(new THREE.HemisphereLight('#fff7e4', '#6b8d72', 2.2));
-    const sun = new THREE.DirectionalLight('#fff4d4', 2.3); sun.position.set(-10, 22, -15); this.scene.add(sun);
+    this.scene.add(new THREE.HemisphereLight('#fff7e4', '#6b8d72', 1.65));
+    const sun = new THREE.DirectionalLight('#fff1d4', 2.5);
+    sun.position.set(-10, 22, -15); sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -17, right: 17, top: 17, bottom: -17, near: 1, far: 65 });
+    sun.shadow.normalBias = 0.015; sun.shadow.bias = -0.0002;
+    this.scene.add(sun);
     this.scene.add(this.staticGroup, this.dynamicGroup);
     this.buildGround();
     this.camera.position.set(this.target.x + 17, 19, this.target.z + 21);
@@ -210,8 +224,9 @@ export class ParkScene {
     this.staticGroup.add(mesh(box, sand, 0, -0.25, 0, WIDTH + 0.8, 0.52, HEIGHT + 0.8));
     const meadow = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}art/meadow.webp`);
     meadow.colorSpace = THREE.SRGBColorSpace; meadow.wrapS = THREE.RepeatWrapping; meadow.wrapT = THREE.RepeatWrapping;
-    meadow.repeat.set(3, 2.5); meadow.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
-    const meadowPlane = mesh(new THREE.PlaneGeometry(WIDTH, HEIGHT), new THREE.MeshStandardMaterial({ map: meadow, roughness: 1 }), 0, 0.025, 0);
+    meadow.repeat.set(2.2, 1.8); meadow.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    const meadowPlane = mesh(new THREE.PlaneGeometry(WIDTH, HEIGHT), new THREE.MeshStandardMaterial({ map: meadow, roughness: 1, color: '#b8cb9a' }), 0, 0.025, 0);
+    meadowPlane.receiveShadow = true;
     meadowPlane.rotation.x = -Math.PI / 2; this.staticGroup.add(meadowPlane);
     const lines: number[] = [];
     for (let x = -WIDTH / 2; x <= WIDTH / 2; x++) lines.push(x, 0.043, -HEIGHT / 2, x, 0.043, HEIGHT / 2);
@@ -225,7 +240,7 @@ export class ParkScene {
     seaTexture.repeat.set(18, 18);
     seaTexture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
     this.seaTexture = seaTexture;
-    const sea = mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ map: seaTexture, roughness: 0.72 }), 0, -0.55, 0);
+    const sea = mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ map: seaTexture, color: '#8acdc1', roughness: 0.72 }), 0, -0.55, 0);
     sea.rotation.x = -Math.PI / 2; this.staticGroup.add(sea);
     for (let i = 0; i < 42; i++) {
       const x = (i * 7.37) % 28 - 14, z = (i * 9.73) % 24 - 12;
@@ -241,11 +256,11 @@ export class ParkScene {
     const dockTexture = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}art/dock.webp`);
     dockTexture.colorSpace = THREE.SRGBColorSpace;
     const dock = new THREE.Sprite(new THREE.SpriteMaterial({ map: dockTexture, transparent: true, alphaTest: 0.03, depthWrite: false }));
-    dock.position.set(-11.8, 1.24, 8.5); dock.scale.set(4.45, 2.75, 1); this.staticGroup.add(dock);
+    dock.position.set(-11.8, 1.24, 8.5); dock.scale.set(4.45, 2.75, 1); this.staticGroup.add(groundShadow(-11.8, 8.5, 1.5, 0.75), dock);
     const clinicTexture = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}art/clinic.webp`);
     clinicTexture.colorSpace = THREE.SRGBColorSpace;
     const clinic = new THREE.Sprite(new THREE.SpriteMaterial({ map: clinicTexture, transparent: true, alphaTest: 0.03, depthWrite: false }));
-    clinic.position.set(0.5, 1.75, 6.5); clinic.scale.set(4.3, 3.6, 1); this.staticGroup.add(clinic);
+    clinic.position.set(0.5, 2.06, 6.5); clinic.scale.set(5.1, 4.25, 1); this.staticGroup.add(groundShadow(0.5, 6.5, 1.65, 0.95), clinic);
   }
 
   private updateCamera(): void {
@@ -306,6 +321,8 @@ export class ParkScene {
   }
 
   draw(state: GameState, preview: Preview): void {
+    this.latestDraw = { state, preview };
+    const activeCapyIds = new Set<string>();
     this.dynamicGroup.traverse(node => { if (node instanceof THREE.InstancedMesh) node.dispose(); });
     for (const material of this.dynamicMaterials) material.dispose();
     this.dynamicMaterials = [];
@@ -345,6 +362,8 @@ export class ParkScene {
     }
     trees.forEach((p, i) => {
       if (occupied.has(cellKey(p.x, p.y))) return;
+      // Leave the clinic facade and its approach readable at phone size.
+      if (p.x >= 11 && p.x <= 16 && p.y >= 15) return;
       if (habitatClearance.has(cellKey(p.x, p.y))) return;
       const [x, z] = coord(p.x, p.y);
       const tree = new THREE.Sprite(this.treeMaterial);
@@ -386,12 +405,12 @@ export class ParkScene {
       });
       const displayCells: Record<Species, string[]> = { capybara: ['2,11', '6,10'], tiger: ['10,6', '13,5'], penguin: ['17,13', '20,13'] };
       const preferredPatrols: Record<Species, string[][]> = {
-        capybara: [['2,11', '2,12'], ['6,10', '6,11']],
+        capybara: [['2,11', '2,12', '2,13', '2,14'], ['6,10', '5,10', '4,10', '3,10']],
         tiger: [['10,6', '11,6', '12,6'], ['13,5', '13,6', '13,7']],
         penguin: [['17,13', '18,13', '18,12'], ['20,13', '21,13', '21,12']],
       };
       const free = new Set(cells);
-      animals.forEach((_, i) => {
+      animals.forEach((animal, i) => {
         const preferred = displayCells[species][i];
         const designed = preferredPatrols[species][i];
         const useDesigned = designed && designed.every((cell, index) => {
@@ -424,27 +443,39 @@ export class ParkScene {
           // Keep the walking silhouette inside the standard enclosure rather
           // than letting its nose cross the edge fence at boundary cell centers.
           const insetX = species === 'capybara' && useDesigned ? rx === 2 ? 0.24 : rx === 7 ? -0.24 : 0 : 0;
-          const insetZ = species === 'capybara' && useDesigned && ry === 10 ? 0.18 : 0;
+          const insetZ = species === 'capybara' && useDesigned ? ry === 10 ? 0.18 : ry === 14 ? -0.18 : 0 : 0;
           return new THREE.Vector3(wx + insetX, 0, wz + insetZ);
         });
         if (species === 'capybara') {
+          const routeKey = route.map(point => `${point.x},${point.z}`).join(';');
+          let entry = this.capyActors.get(animal.id);
+          if (entry && entry.routeKey !== routeKey) { entry.actor.dispose(); this.capyActors.delete(animal.id); entry = undefined; }
+          if (!entry) {
+            const actor = createCapybara(CAPY_SCALE);
+            if (actor) {
+              const controller = new LocomotionController(route, { speed: 0.35 * CAPY_SCALE, strideLength: 0.42 * CAPY_SCALE, startPhase: i * 0.37 });
+              actor.update(0, controller.pose);
+              entry = { actor, controller, routeKey };
+              this.capyActors.set(animal.id, entry);
+            }
+          }
+          if (entry) {
+            activeCapyIds.add(animal.id);
+            group.add(entry.actor.root);
+            return;
+          }
+          // Only a still portrait is shown if the model cannot load. Do not
+          // return to the floating video billboard while presenting it as 3D.
           const walker = new THREE.Group();
           walker.position.copy(route[0] ?? new THREE.Vector3(x, 0, z));
           walker.add(groundShadow(0, 0, 0.43, 0.22));
-          // The original portrait remains visible while the video-derived walk
-          // textures load; the rejected procedural rig is never displayed.
           const material = this.animalMaterials.capybara.clone();
-          // Large decorative billboards can otherwise sort in front of an
-          // animal in a neighboring free cell (especially the pond rocks).
-          material.depthTest = false;
           const figure = new THREE.Sprite(material);
-          figure.renderOrder = 5;
-          figure.scale.set(1.42, 0.89, 1);
-          figure.position.set(0, 0.28, 0);
+          figure.scale.set(1.2, 0.82, 1);
+          figure.position.set(0, 0.34, 0);
           walker.add(figure);
           this.dynamicMaterials.push(material);
           group.add(walker);
-          this.animated.push({ object: walker, origin: walker.position.clone(), kind: 'animal', route, delay: i * 2.3, capyWalk: true, sprite: figure, baseY: 0.28 });
           return;
         }
         const figure = new THREE.Sprite(this.animalMaterials[species]);
@@ -461,6 +492,9 @@ export class ParkScene {
         this.animated.push({ object: walker, origin: walker.position.clone(), kind: 'animal', route, delay: i * 2.3, sprite: figure, baseY: height * 0.43 });
       });
     }
+    for (const [id, entry] of this.capyActors) {
+      if (!activeCapyIds.has(id)) { entry.actor.dispose(); this.capyActors.delete(id); }
+    }
     if (state.animals.length) {
       const promenade = state.paths
         .map(key => key.split(',').map(Number))
@@ -476,7 +510,7 @@ export class ParkScene {
       for (let i = 0; i < Math.min(4, Math.max(1, Math.floor(route.length / 3))); i++) {
         const start = route[Math.floor(i * route.length / 4)] ?? new THREE.Vector3(dockX, 0, dockZ);
         const [x, z] = [start.x, start.z];
-        const person = new THREE.Group(); person.position.set(x, 0, z); person.scale.setScalar(0.82);
+        const person = new THREE.Group(); person.position.set(x, 0, z); person.scale.setScalar(1.15);
         const shirt = [flower, frost, orange, leaf][i % 4];
         person.add(mesh(box, shirt, 0, 0.62, 0, 0.28, 0.43, 0.2));
         person.add(mesh(box, charcoal, -0.075, 0.24, 0, 0.1, 0.37, 0.11));
@@ -485,6 +519,7 @@ export class ParkScene {
         person.add(mesh(box, cream, 0.19, 0.61, 0, 0.09, 0.35, 0.1));
         person.add(mesh(ball, cream, 0, 0.98, 0, 0.13, 0.14, 0.13));
         person.add(mesh(box, i % 4 === 0 ? darkWood : wood, 0, 1.09, -0.01, 0.25, 0.07, 0.25));
+        person.add(groundShadow(0, 0, 0.18, 0.12));
         group.add(person); this.animated.push({ object: person, origin: person.position.clone(), kind: 'visitor', route, delay: i * Math.max(2, route.length / 4) });
       }
     }
@@ -511,12 +546,16 @@ export class ParkScene {
   private animate = (): void => {
     requestAnimationFrame(this.animate);
     const t = performance.now() / 1000;
+    const dt = Math.min(0.05, Math.max(0, t - this.previousTime));
+    this.previousTime = t;
+    if (!this.motionQuery.matches) {
+      for (const { actor, controller } of this.capyActors.values()) actor.update(dt, controller.update(dt));
+    }
     if (this.seaTexture && !this.motionQuery.matches) this.seaTexture.offset.set(t * 0.009, t * 0.0045);
-    this.animated.forEach(({ object, origin, kind, route, delay, wings, sprite, baseY, capyWalk }, i) => {
+    this.animated.forEach(({ object, origin, kind, route, delay, wings, sprite, baseY }, i) => {
       if (this.motionQuery.matches) {
         object.position.copy(origin);
         if (sprite) { sprite.position.y = baseY ?? sprite.position.y; sprite.material.rotation = 0; }
-        if (capyWalk && sprite && this.capyFramesLoaded.has(0)) sprite.material.map = this.capyFrames[0];
         if (wings) for (const wing of wings) wing.rotation.y = 0;
         return;
       }
@@ -528,20 +567,7 @@ export class ParkScene {
         const distance = travel < leg ? travel : leg * 2 - travel;
         const segment = Math.min(Math.floor(distance), route.length - 2);
         object.position.lerpVectors(route[segment], route[segment + 1], distance - segment);
-        if (capyWalk && sprite) {
-          // One source gait spans a visible ~0.36 world-unit stride; advance
-          // it by distance walked, so feet do not cycle rapidly in place.
-          const frame = Math.floor(walked / 0.36 * this.capyFrames.length) % this.capyFrames.length;
-          if (this.capyFramesLoaded.has(frame)) sprite.material.map = this.capyFrames[frame];
-          else if (this.capyFramesLoaded.has(0)) sprite.material.map = this.capyFrames[0];
-          // The source animal faces screen-right. Flip it to follow the
-          // projected direction of each patrol segment, including the return.
-          const screenward = (route[segment + 1].x - route[segment].x) * 0.78 -
-            (route[segment + 1].z - route[segment].z) * 0.63;
-          sprite.scale.x = (screenward * (travel >= leg ? -1 : 1) < 0 ? -1 : 1) * 1.42;
-          sprite.position.y = 0.28;
-        }
-        if (sprite && !capyWalk) {
+        if (sprite) {
           sprite.position.y = (baseY ?? 0) + Math.abs(Math.sin(t * 3.4 + i)) * 0.035;
           sprite.material.rotation = Math.sin(t * 1.5 + i) * 0.022;
         }
