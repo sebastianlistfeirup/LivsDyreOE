@@ -100,6 +100,7 @@ export class ParkScene {
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private target = new THREE.Vector3(-5, 0, 4);
   private zoom = 2.2;
+  private motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   private pointerStart: { x: number; y: number } | null = null;
   private moved = false;
   onCell: (at: Point, side: number) => void = () => {};
@@ -350,8 +351,9 @@ export class ParkScene {
   private animate = (): void => {
     requestAnimationFrame(this.animate);
     const t = performance.now() / 1000;
-    if (this.seaTexture) this.seaTexture.offset.set(t * 0.0016, t * 0.0008);
+    if (this.seaTexture && !this.motionQuery.matches) this.seaTexture.offset.set(t * 0.0016, t * 0.0008);
     this.animated.forEach(({ object, origin, kind }, i) => {
+      if (this.motionQuery.matches) { object.position.copy(origin); return; }
       const phase = t * (kind === 'animal' ? 0.95 : kind === 'visitor' ? 1.7 : 0.58) + i * 1.37;
       object.position.set(
         origin.x + Math.sin(phase) * (kind === 'animal' ? 0.12 : kind === 'visitor' ? 0.18 : 0.015),

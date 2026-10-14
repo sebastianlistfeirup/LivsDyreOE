@@ -35,6 +35,7 @@ app.innerHTML = `<div class="app-shell">
     <section class="world-panel" aria-label="Parkens byggefelt">
       <div id="park-canvas" class="park-canvas"></div>
       <div class="world-shade"></div>
+      <div id="celebration" class="celebration" aria-hidden="true"></div>
       <div class="world-top"><span class="island-label"><span class="island-dot"></span> <span id="park-name-label"></span></span><span class="chapter-label" id="chapter-label"></span></div>
       <div class="world-bottom"><div class="focus-buttons"><button data-action="focus" data-value="dock">Kaj</button><button data-action="focus" data-value="capybara">Flod</button><button data-action="focus" data-value="tiger">Skov</button><button data-action="focus" data-value="penguin">Kyst</button></div><div class="zoom-buttons"><button data-action="zoom-out" aria-label="Zoom ud">−</button><button data-action="zoom-in" aria-label="Zoom ind">+</button></div></div>
       <div id="preview-bar" class="preview-bar"></div>
@@ -90,6 +91,16 @@ function say(text: string): void {
   speak(text);
 }
 
+function celebrateOpening(): void {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const confetti = document.querySelector<HTMLElement>('#celebration')!;
+  confetti.innerHTML = Array.from({ length: 30 }, (_, i) =>
+    `<i style="--x:${(i * 37 + 9) % 100}%;--delay:${(i * 17) % 13 / 10}s;--spin:${i % 2 ? 1 : -1};--hue:${(i * 43) % 360}deg"></i>`
+  ).join('');
+  confetti.classList.add('playing');
+  window.setTimeout(() => { confetti.classList.remove('playing'); confetti.replaceChildren(); }, 4300);
+}
+
 function commit(change: (draft: GameState) => string | null, success?: string): boolean {
   const draft = clone(game);
   const problem = change(draft);
@@ -108,7 +119,7 @@ function commit(change: (draft: GameState) => string | null, success?: string): 
 function chapterCard(): string {
   const chapter = CHAPTERS[Math.min(game.chapterId, 10) - 1];
   const ready = chapterReady(game);
-  return `<section class="chapter-card"><div class="eyebrow">KAPITEL ${game.chapterId} AF 10</div><h2>${chapter[0]}</h2><p>${chapter[1]}</p><div class="chapter-progress"><span class="progress-track"><span style="width:${(game.chapterId - 1) * 10}%"></span></span><span>${game.chapterId}/10</span></div>${ready && !game.partyOpen ? button('advance', '', game.chapterId === 10 ? 'Åbn parken ✦' : 'Fortsæt historien →', 'primary wide') : `<div class="gentle-hint">${game.partyOpen ? 'Parken er åben. Byg frit videre!' : 'Du bestemmer selv tempoet.'}</div>`}</section>`;
+  return `<section class="chapter-card"><div class="eyebrow">KAPITEL ${game.chapterId} AF 10</div><h2>${chapter[0]}</h2><p>${chapter[1]}</p><div class="chapter-progress"><span class="progress-track"><span style="width:${game.partyOpen ? 100 : (game.chapterId - 1) * 10}%"></span></span><span>${game.chapterId}/10</span></div>${ready && !game.partyOpen ? button('advance', '', game.chapterId === 10 ? 'Åbn parken ✦' : 'Fortsæt historien →', 'primary wide') : `<div class="gentle-hint">${game.partyOpen ? 'Parken er åben. Byg frit videre!' : 'Du bestemmer selv tempoet.'}</div>`}</section>`;
 }
 
 function homeCard(species: Species): string {
@@ -353,7 +364,7 @@ app.addEventListener('click', event => {
   else if (action === 'resume') { missionVisible = true; serviceVisible = false; render(); }
   else if (action === 'service') { serviceVisible = true; missionVisible = false; render(); }
   else if (action === 'close-mission') { missionVisible = false; serviceVisible = false; render(); }
-  else if (action === 'advance') { if (commit(draft => advanceChapter(draft), 'Et nyt kapitel er åbnet!')) { tab = 'park'; if (game.partyOpen) say(`${game.parkName} er åben! Alle seks dyr er her.`); render(); } }
+  else if (action === 'advance') { if (commit(draft => advanceChapter(draft), 'Et nyt kapitel er åbnet!')) { tab = 'park'; if (game.partyOpen) { say(`${game.parkName} er åben! Alle seks dyr er her.`); celebrateOpening(); } render(); } }
   else if (action === 'photo' || action === 'final-photo') { const image = action === 'final-photo' ? scene.captureOverview() : scene.capture(); commit(draft => { addPhoto(draft, action === 'final-photo', image); return null; }, 'Et billede af din park er gemt i albummet.'); }
   else if (action === 'rename-park') {
     const name = (document.querySelector<HTMLInputElement>('#park-name-input')?.value ?? '').trim();

@@ -3,6 +3,9 @@
 Et dansksproget, mobilvenligt park- og redningsspil. Byg tre trygge levesteder, red seks dyr gennem minispil, og åbn din egen dyreø gennem ti kapitler.
 
 Når GitHub Pages er aktiveret, kan spillet åbnes på telefonen her: **https://sebastianlistfeirup.github.io/LivsDyreOE/**. Der kræves ingen installation eller konto. Drej telefonen, hvis du foretrækker mere plads til byggekortet.
+På iPhone kan siden føjes til hjemmeskærmen via Safaris delingsmenu; på Android bruges browserens **Føj til startskærm**. Internet er stadig nødvendigt for at hente spillet.
+
+Første udgivelse kræver én handling fra repository-ejeren: Log ind på GitHub, åbn [Settings → Pages](https://github.com/sebastianlistfeirup/LivsDyreOE/settings/pages), og vælg **GitHub Actions** under **Build and deployment → Source**. GitHub viser 404 for indstillingssiden, hvis du ikke er logget ind som ejer. Derefter kan den seneste kørsel genstartes under **Actions**, eller en ny ændring til `main` udløser automatisk en udgivelse.
 
 ## Spil på telefon
 

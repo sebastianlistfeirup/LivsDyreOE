@@ -12,6 +12,9 @@ def check_layout(browser, width, height):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(URL, wait_until="networkidle")
     page.locator(".park-canvas canvas").wait_for()
+    if width == 320:
+        manifest = page.request.get(f"{URL}manifest.webmanifest")
+        assert manifest.ok and manifest.json()["start_url"] == "/LivsDyreOE/"
     page.screenshot(path=f"/tmp/livs-{width}x{height}.png", full_page=True)
     sizes = page.evaluate(
         "({body: document.body.scrollWidth, viewport: innerWidth, canvas: document.querySelector('.park-canvas canvas').getBoundingClientRect().width})"
@@ -133,6 +136,8 @@ def play_first_rescue(browser):
     page.locator('[data-action="final-photo"]').click()
     page.locator('[data-action="advance"]').click()
     assert "Parken er åben" in page.locator("#chapter-label").inner_text()
+    assert page.locator("#celebration.playing i").count() == 30
+    assert "width:100%" in page.locator(".chapter-progress .progress-track span").get_attribute("style")
     page.reload(wait_until="networkidle")
     assert "6/6 dyr" in page.locator("#animal-count").inner_text()
     assert "Parken er åben" in page.locator("#chapter-label").inner_text()
