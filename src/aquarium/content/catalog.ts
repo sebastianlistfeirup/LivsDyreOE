@@ -1,0 +1,115 @@
+export const FISH = [
+  {
+    id: "bobo",
+    name: "Bobo",
+    price: 0,
+    color: "#ffae48",
+    personality: "Nysgerrig",
+    favorite: "arch",
+    line: "Hvad mon der gemmer sig derovre?",
+  },
+  {
+    id: "sky",
+    name: "Sky",
+    price: 40,
+    color: "#67caff",
+    personality: "Genert",
+    favorite: "cave",
+    line: "Her er et roligt sted. Vil du kigge med?",
+  },
+  {
+    id: "glimt",
+    name: "Glimt",
+    price: 60,
+    color: "#ffe273",
+    personality: "Legesyg",
+    favorite: "ring",
+    line: "Én tur mere gennem ringen!",
+  },
+  {
+    id: "plet",
+    name: "Plet",
+    price: 80,
+    color: "#adcf72",
+    personality: "Samler",
+    favorite: "bubbles",
+    line: "Se den lille sten! Den skal med i samlingen.",
+  },
+] as const;
+
+export const DECORATIONS = [
+  {
+    id: "seagrass",
+    name: "Søgræs",
+    price: 15,
+    icon: "🌿",
+    description: "Et blødt, grønt sted at svømme igennem.",
+  },
+  {
+    id: "cave",
+    name: "Lille hule",
+    price: 20,
+    icon: "🪨",
+    description: "Skys helt eget, rolige skjulested.",
+  },
+  {
+    id: "ring",
+    name: "Svømmering",
+    price: 20,
+    icon: "⭕",
+    description: "Glimt elsker at suse igennem den.",
+  },
+  {
+    id: "arch",
+    name: "Koralbue",
+    price: 25,
+    icon: "🪸",
+    description: "En farverig passage, som Bobo kan udforske.",
+  },
+  {
+    id: "clam",
+    name: "Muslingeseng",
+    price: 25,
+    icon: "🐚",
+    description: "Et perlemorsskinnende hvilested.",
+  },
+  {
+    id: "bubbles",
+    name: "Boblesten",
+    price: 30,
+    icon: "🫧",
+    description: "Små, dansende bobler til Plets samling.",
+  },
+  {
+    id: "wreck",
+    name: "Trævrag",
+    price: 30,
+    icon: "⛵",
+    description: "Et lille eventyr for alle dine fisk.",
+  },
+  {
+    id: "lantern",
+    name: "Festlanterne",
+    price: 35,
+    icon: "🏮",
+    description: "Et varmt skær til akvariets fest.",
+  },
+] as const;
+
+export const TYPE_NAMES = [
+  "skaller",
+  "stjerner",
+  "dråber",
+  "blade",
+  "perler",
+] as const;
+export const KIND_NAMES: Record<string, string> = {
+  shell: "skaller",
+  star: "stjerner",
+  drop: "dråber",
+  leaf: "blade",
+  pearl: "perler",
+  sand: "sand",
+  coral: "koraller",
+  special: "specialbrikker",
+};

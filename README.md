@@ -1,40 +1,61 @@
-# Livs Dyreø
+# Livs akvarie
 
-Et dansksproget, mobilvenligt park- og redningsspil. Byg tre trygge levesteder, red seks dyr gennem minispil, og åbn din egen dyreø gennem ti kapitler.
+Et dansk match-3-mobilspil med funklende havjuveler, kædereaktioner og et akvarium, du selv indretter. Ti baner, fire fisk og otte dekorationer. Ingen reklamer, betaling, energi eller ventetid.
 
-Spillet kan åbnes på telefonen her: **https://sebastianlistfeirup.github.io/LivsDyreOE/**. En kort [kapivar-animationstest](https://sebastianlistfeirup.github.io/LivsDyreOE/previews/capy-animation.html) viser gangen uden at gennemføre redningsmissionen først. Der kræves ingen installation eller konto. Drej telefonen, hvis du foretrækker mere plads til byggekortet.
-På iPhone kan siden føjes til hjemmeskærmen via Safaris delingsmenu; på Android bruges browserens **Føj til startskærm**. Internet er stadig nødvendigt for at hente spillet.
+Spiladressen er **https://sebastianlistfeirup.github.io/LivsDyreOE/**. Adressen beholder det oprindelige repository-navn; det aktive spil hedder **Livs akvarie**. GitHub Actions tester, bygger og udgiver main til GitHub Pages.
 
-GitHub Pages er sat til **GitHub Actions**. Nye ændringer til `main` udgiver automatisk en opdateret version.
+## På telefonen
 
-## Spil på telefon
+- Træk en brik hen til en nabo. Du kan også trykke på to naboer. Tre ens forsvinder; et ugyldigt bytte koster intet.
+- Fire på række skaber en stråle. Fem skaber en farveperle. Et L eller T skaber en boblebombe. Byt specialbrikker med en nabo; stråler og bomber kan også vælges og aktiveres med **Brug**.
+- Tryk **♪** for lyd. Brikkerne følger fingeren, hopper blødt på plads og sender indsamlede juveler op til banens mål. Specialeffekter har lysstråler, boblebrag og kædereaktioner.
+- Juvelernes former og nuancer udvikler sig gennem fem temaer: Solbugten, Koralhaven, Perlelagunen, Krystalrevet og Stjernedybet. Hvert tema varer to baner; grundfarverne bevarer deres betydning.
+- Tryk **Akvarium → Indret** for at købe og placere noget på sandbunden. Tryk på en placeret dekoration for at flytte den gratis, dreje den eller sælge den til fuld pris.
+- Tryk på en fisk for at give den navn, farveskær og yndlingsting. Sky besøger hulen; Glimt svømmer gennem ringen. Fiskene behøver ikke fodring.
+- **Et lille hint** hjælper uden at spille for dig. Hvis trækkene slipper op, er fem ekstra træk og nye forsøg gratis.
 
-- Tryk **Byg → Byg færdigt hjem** for at starte med kapivarernes hjem. Det bygger sti, hegn, port og det nødvendige inventar i ét trin; du kan ændre det senere.
-- Tryk **Park → Fortsæt historien** og derefter **Missioner** for at begynde den første redning.
-- I minispillene kan du altid bruge **Hjælp til ét trin** eller **Løs med hjælp**. Der er ingen tidsgrænse.
-- Vil du bygge selv, så vælg et værktøj under **Byg**, tryk på øen, læs forhåndsvisningen, og tryk **Placér**. Ugyldige placeringer forklares, før du betaler.
-- Vælg **Flyt**, tryk på en bygget ting og derefter på dens nye sted. **Fortryd** ruller den seneste ændring tilbage. Du kan også trykke direkte på en bygget ting for at flytte den.
-- Træk på øen for at panorere; knib med to fingre eller brug `+` og `−` for at zoome.
-- Sommerfugle og natur bevæger sig fra starten. Dyrene kommer først til øen, når de er reddet. Kapivarernes gang bruger en billedsekvens fra videoreferencen; deres animation kan ses tydeligere med **Flod** og zoomknapperne.
-- Spillet gemmer automatisk på den aktuelle enhed. Under **Indstillinger** kan du eksportere et gemt spil til en fil og importere det på en anden telefon.
+På iPhone: Åbn i Safari, vælg **Del → Føj til hjemmeskærm**. På Android: Vælg **Installer app/Føj til startskærm** i browseren. Så åbner spillet uden almindelig browserramme. Første åbning kræver net; efter den færdige offline-download kan spillet genåbnes og spilles offline i understøttede browsere. Rydning af browserdata fjerner både offline-filer og lokal gemning.
 
-Spillets regler, økonomi, missioner, kapitler og navn er baseret på den vedlagte *LIVS_DYREOE_BIBEL_v1_2*. Øens illustrationer er spiltilpassede billeder; kapivarens gangbilleder er udklip fra en videoreference stillet til rådighed af brugeren. Referencebillederne er stilretning, ikke skærmbilleder af den aktuelle implementering.
+Spillet gemmer automatisk på enheden. **Indstillinger → Gem en kopi / Åbn en kopi** flytter en gemning mellem enheder. Der er ingen konto eller automatisk synkronisering. Dansk oplæsning bruger den danske stemme, enheden eventuelt har installeret.
 
 ## Udvikling
 
-Kræver Node.js 20 eller nyere.
+Node.js 20+; CI bruger Node.js 24. Brug det eksisterende checkout i /workspace/LivsDyreOE.
 
 ```sh
 npm ci
-npm run dev
-npm test
-npm run build
+npm run dev -- --host 0.0.0.0 --port 4173
 ```
 
-Åbn Vites adresse med stien `/LivsDyreOE/`. Produktionsbygningen ligger i `dist/`. GitHub Actions tester og bygger før udgivelse til GitHub Pages fra `main`.
+Vites base er /LivsDyreOE/. Start en ny serverproces efter genstart af udviklingsmiljøet; en gammel proces kan ikke antages at overleve.
 
-Spillet bruger Three.js til parken og almindelige HTML-knapper til opgaverne. Gemte data bliver i browserens lokale lager, medmindre spilleren selv vælger at eksportere dem. Ingen konto, reklamer eller analyseværktøjer er indbygget.
+```sh
+npm test
+npm run typecheck
+npm run build
+npm run preview -- --host 0.0.0.0 --port 4174
+```
 
-## Kvalitet og kendte begrænsninger
+Browserkontroller kræver Python Playwright og Chromium. I det forberedte cloudmiljø findes browseren på /usr/bin/chromium.
 
-Den fulde historie er gennemspillet automatisk i Chromium ved fem skærmstørrelser, inklusive telefon i stående og liggende format. Den faktiske park er interaktiv og bruger illustrerede objekter, men dens 3D-detaljer og animationer er endnu ikke på 1:1-niveau med de ambitiøse konceptbilleder. Fysiske iOS- og Android-enheder bør også prøves før spillet kaldes færdigt.
+```sh
+# Mod udviklingsserveren på port 4173:
+python tests/aquarium_mobile.py
+python tests/aquarium_gestures.py
+# Mod den færdigbyggede preview-server på port 4174, inklusive offline:
+LIVS_TEST_URL=http://127.0.0.1:4174/LivsDyreOE/ LIVS_TEST_PRODUCTION=1 python tests/aquarium_mobile.py
+```
+
+Spillet bruger TypeScript, HTML/SVG, Canvas-partikler og CSS/Web Animations. Reglerne er uafhængige af billeder og animationstiming. src/aquarium/core indeholder den seedede motor, save indeholder validering og turn-recovery, render indeholder juveler og fisk. Billederne er originale genererede illustrationer: se [aktivoversigten](docs/aquarium-assets.md). Der er ingen tredjepartsanalyse eller netværkskonto.
+
+## Kontrolleret kvalitet og afgrænsning
+
+75 automatiske regel-/gemme-/regressionstests, herunder 1.000 seedede træk, består. Alle ti baner er gennemført via browserens touch-kontroller. Fem mobil-/tabletstørrelser, ugyldige swipes, annullerede træk, alle specialeffekter, genindlæsning under en vindende kaskade, køb, refundering, import/eksport og offline genåbning er kontrolleret. Se [STATUS.md](STATUS.md) for den konkrete leverance og åbne telefonkontroller.
+
+Det er browseremulering, ikke en fysisk iPhone-/Android-test. Fiskene er illustrerede 2D-figurer med animerede haler, finner, svømmebaner og adfærd — ikke fuldt riggede 3D-dyr. Referencebillederne er ambitionsmål, ikke dokumentation for 1:1-kvalitet.
+
+## Livs Dyreø er sat på pause
+
+Den tidligere udgivne ø er bevaret ved f29f87a. Den ikke-udgivne 3D-animationsprototype ligger på archive/livs-dyreo-animation-wip ved 1f14aab. Akvariet bruger sin egen save-nøgle, livs-akvarie.save.v1, og ændrer ikke øens gemte data.
+
+Designgrundlaget er brugerens *BOBLEBUGTEN_BIBEL_v1_2.pdf*, med brugerens navneændring til **Livs akvarie**. Projektbeslutninger og præcise regler findes i [designnotatet](docs/LIVS_AKVARIE.md).
